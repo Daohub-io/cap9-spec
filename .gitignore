@@ -1,0 +1,7 @@
+# Isabelle
+*.thy~
+ROOT~
+output
+
+# macOS
+.DS_Store
