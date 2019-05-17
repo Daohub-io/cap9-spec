@@ -8,7 +8,8 @@ session "cap9-spec" = "HOL-Word" +
   options [
     document = pdf,
     document_output = "output",
-    document_variants = "Cap9IsabelleSpec"
+    document_variants = "Cap9IsabelleSpec",
+    quick_and_dirty = true
   ]
   theories
     Cap9

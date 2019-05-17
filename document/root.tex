@@ -1,10 +1,14 @@
 \documentclass[11pt,a4paper]{article}
 \usepackage{isabelle,isabellesym}
 
+\usepackage{geometry}
+\geometry{margin=0.8in}
+% \geometry{tmargin=1.35in, bmargin=1.35in}
+
 % further packages required for unusual symbols (see also
 % isabellesym.sty), use only when needed
 
-%\usepackage{amssymb}
+\usepackage{amssymb}
   %for \<leadsto>, \<box>, \<diamond>, \<sqsupset>, \<mho>, \<Join>,
   %\<lhd>, \<lesssim>, \<greatersim>, \<lessapprox>, \<greaterapprox>,
   %\<triangleq>, \<yen>, \<lozenge>
@@ -22,8 +26,28 @@
   %for \<onequarter>, \<onehalf>, \<threequarters>, \<degree>, \<cent>,
   %\<currency>
 
+\usepackage{xcolor}
+  %for colorization
+
 % this should be the last package used
 \usepackage{pdfsetup}
+
+\definecolor{keyword}{RGB}{215, 58, 73}
+\definecolor{command}{RGB}{215, 58, 73}
+\definecolor{math}{RGB}{0, 92, 197}
+\newcommand{\mathstart}{\small\color{math}\it}
+\newcommand{\mathend}{\small\normalcolor\it}
+
+\let\oldisabellestyleit\isabellestyleit
+\renewcommand{\isabellestyleit}{%
+\oldisabellestyleit%
+\def\isachardoublequoteopen{{\color{math}\scriptsize\it\texttt{"}}\aftergroup\mathstart}%
+\def\isachardoublequoteclose{{\color{math}\scriptsize\it\texttt{"}}\aftergroup\mathend}%
+\def\isacharbackquote{\rm\`{}}% for backtick that looks nicer with | ( in |`)
+\def\isacharat{\raisebox{-0.025em}{\textit{\scriptsize@}}}%
+\def\isacharunderscore{\texttt{\_}}%
+\def\isacharunderscorekeyword{\texttt{\_}}%
+}
 
 % urls in roman style, theory text in math-similar italics
 \urlstyle{rm}
@@ -32,6 +56,14 @@
 % for uniform font size
 %\renewcommand{\isastyle}{\isastyleminor}
 
+\renewcommand{\isastyle}{\small\it\color{black}}
+\renewcommand{\isastyletext}{\normalsize\rm\color{black}}
+\renewcommand{\isastyletxt}{\rm\color{black}}
+\renewcommand{\isastylecmt}{\rm\color{black}}
+
+\let\oldisakeyword\isakeyword
+\renewcommand{\isakeyword}[1]{{\color{keyword}\oldisakeyword{#1}}}
+\renewcommand{\isacommand}[1]{{\color{command}\oldisakeyword{#1}}}
 
 \begin{document}
 

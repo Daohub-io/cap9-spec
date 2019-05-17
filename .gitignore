@@ -3,5 +3,12 @@
 ROOT~
 output
 
+# LaTeX
+root.aux
+root.aux
+root.fls
+root.log
+root.fdb_latexmk
+
 # macOS
 .DS_Store
