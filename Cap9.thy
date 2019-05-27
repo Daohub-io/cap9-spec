@@ -3,7 +3,371 @@ section \<open>Preliminaries\<close>
 theory Cap9
 imports
   "HOL-Word.Word"
+  "Word_Lib/Word_Lemmas"
 begin
+
+section \<open>Preliminaries\<close>
+
+text \<open>
+  Instantiate @{class len0} type class to extract lengths from word
+  types avoiding repeated explicit numeric specification of the length.
+\<close>
+
+instantiation word :: (len) len begin
+definition len_word[simp]: "len_of (_ :: 'a::len word itself) = LENGTH('a)"
+instance by (standard, simp)
+end
+
+instantiation itself :: (len) size
+begin
+definition size_itself where [simp, code]: "size (n::'a::len itself) = LENGTH('a)"
+instance ..
+end
+
+declare unat_word_ariths[simp] word_size[simp]
+
+definition "width w \<equiv> LEAST n. unat w < 2 ^ n" for w :: "'a::len word"
+
+lemma widthI[intro]: "\<lbrakk>\<And> u. u < n \<Longrightarrow> 2 ^ u \<le> unat w; unat w < 2 ^ n\<rbrakk> \<Longrightarrow> width w = n"
+  unfolding width_def Least_def
+  using not_le
+  apply (intro the_equality, blast)
+  by (meson nat_less_le)
+
+lemma width_wf[simp]: "\<exists>! n. (\<forall> u < n. 2 ^ u \<le> unat w) \<and> unat w < 2 ^ n"
+  (is "?Ex1 (unat w)")
+proof (induction ("unat w"))
+  case 0
+  show "?Ex1 0" by (intro ex1I[of _ 0], auto)
+next
+  case (Suc x)
+  then obtain n where x:"(\<forall>u<n. 2 ^ u \<le> x) \<and> x < 2 ^ n " by auto
+  show  "?Ex1 (Suc x)"
+  proof (cases "Suc x < 2 ^ n")
+    case True
+    thus "?Ex1 (Suc x)"
+      using x
+      apply (intro ex1I[of _ "n"], auto)
+      by (meson Suc_lessD leD linorder_neqE_nat)
+  next
+    case False
+    thus "?Ex1 (Suc x)"
+      using x
+      apply (intro ex1I[of _ "Suc n"], auto simp add: less_Suc_eq)
+      apply (intro antisym)
+       apply (metis One_nat_def Suc_lessI Suc_n_not_le_n leI numeral_2_eq_2 power_increasing_iff)
+      by (metis Suc_lessD le_antisym not_le not_less_eq_eq)
+  qed
+qed
+
+lemma width_iff[iff]: "(width w = n) = ((\<forall> u < n. 2 ^ u \<le> unat w) \<and> unat w < 2 ^ n)"
+  using width_wf widthI by metis
+
+lemma width_le_size: "width x \<le> size x"
+proof-
+  {
+    assume "size x < width x"
+    hence "2 ^ size x \<le> unat x" using width_iff by metis
+    hence "2 ^ size x \<le> uint x" unfolding unat_def by simp
+  }
+  thus ?thesis using uint_range_size[of x] by (force simp del:word_size)
+qed
+
+lemma width_le_size'[simp]: "size x \<le> n \<Longrightarrow> width x \<le> n" by (insert width_le_size[of x], simp)
+
+lemma nth_width_high[simp]: "width x \<le> i \<Longrightarrow> \<not> x !! i"
+proof (cases "i < size x")
+  case False
+  thus ?thesis by (simp add: test_bit_bin')
+next
+  case True
+  hence "(x < 2 ^ i) = (unat x < 2 ^ i)"
+    unfolding unat_def
+    using word_2p_lem by fastforce
+  moreover assume "width x \<le> i"
+  then obtain n where "unat x < 2 ^ n" and "n \<le> i" using width_iff by metis
+  hence "unat x < 2 ^ i"
+    by (meson le_less_trans nat_power_less_imp_less not_less zero_less_numeral)
+  ultimately show ?thesis using bang_is_le by force
+qed
+
+lemma width_zero[iff]: "(width x = 0) = (x = 0)"
+proof
+  show "width x = 0 \<Longrightarrow> x = 0" using nth_width_high[of x] word_eq_iff[of x 0] nth_0 by (metis le0)
+  show "x = 0 \<Longrightarrow> width x = 0" by simp
+qed
+
+lemma width_zero'[simp]: "width 0 = 0" by simp
+
+lemma width_one[simp]: "width 1 = 1" by simp
+
+lemma high_zeros_less: "(\<forall> i \<ge> u. \<not> x !! i) \<Longrightarrow> unat x < 2 ^ u"
+  (is "?high \<Longrightarrow> _") for x :: "'a::len word"
+proof-
+  assume ?high
+  have size:"size (mask u :: 'a word) = size x" by simp
+  {
+    fix i
+    from \<open>?high\<close> have "(x AND mask u) !! i = x !! i"
+      using nth_mask[of u i] size test_bit_size[of x i]
+      by (subst word_ao_nth) (elim allE[of _ i], auto)
+  }
+  with \<open>?high\<close> have "x AND mask u = x" using word_eq_iff by blast
+  thus ?thesis unfolding unat_def using mask_eq_iff by auto
+qed
+
+lemma nth_width_msb[simp]: "x \<noteq> 0 \<Longrightarrow> x !! (width x - 1)"
+proof (rule ccontr)
+  fix x :: "'a word"
+  assume "x \<noteq> 0"
+  hence width:"width x > 0" using width_zero by fastforce
+  assume "\<not> x !! (width x - 1)"
+  with width have "\<forall> i \<ge> width x - 1. \<not> x !! i"
+    using nth_width_high[of x] antisym_conv2 by fastforce
+  hence "unat x < 2 ^ (width x - 1)" using high_zeros_less[of "width x - 1" x] by simp
+  moreover from width have "unat x \<ge> 2 ^ (width x - 1)" using width_iff[of x "width x"] by simp
+  ultimately show False by simp
+qed
+
+lemma width_iff': "((\<forall> i > u. \<not> x !! i) \<and> x !! u) = (width x = Suc u)"
+proof (rule; (elim conjE | intro conjI))
+  assume "x !! u" and "\<forall> i > u. \<not> x !! i"
+  show "width x = Suc u"
+  proof (rule antisym)
+    from \<open>x !! u\<close> show "width x \<ge> Suc u" using not_less nth_width_high by force
+    from \<open>x !! u\<close> have "x \<noteq> 0" by auto
+    with \<open>\<forall> i > u. \<not> x !! i\<close> have "width x - 1 \<le> u" using not_less nth_width_msb by metis
+    thus "width x \<le> Suc u" by simp
+  qed
+next
+  assume "width x = Suc u"
+  show "\<forall>i>u. \<not> x !! i" by (simp add:\<open>width x = Suc u\<close>)
+  from \<open>width x = Suc u\<close> show "x !! u" using nth_width_msb width_zero
+    by (metis diff_Suc_1 old.nat.distinct(2))
+qed
+
+lemma width_word_log2: "x \<noteq> 0 \<Longrightarrow> width x = Suc (word_log2 x)"
+  using word_log2_nth_same word_log2_nth_not_set width_iff' test_bit_size
+  by metis
+
+lemma width_ucast[OF refl, simp]: "uc = ucast \<Longrightarrow> is_up uc \<Longrightarrow> width (uc x) = width x"
+  by (metis uint_up_ucast unat_def width_def)
+
+lemma width_ucast'[OF refl, simp]:
+  "uc = ucast \<Longrightarrow> width x \<le> size (uc x) \<Longrightarrow> width (uc x) = width x"
+proof-
+  have "unat x < 2 ^ width x" unfolding width_def by (rule LeastI_ex, auto)
+  moreover assume "width x \<le> size (uc x)"
+  ultimately have "unat x < 2 ^ size (uc x)" by (simp add: less_le_trans)
+  moreover assume "uc = ucast"
+  ultimately have "unat x = unat (uc x)" by (metis unat_ucast mod_less word_size)
+  thus ?thesis unfolding width_def by simp
+qed
+
+lemma width_lshift[simp]:
+  "\<lbrakk>x \<noteq> 0; n \<le> size x - width x\<rbrakk> \<Longrightarrow> width (x << n) = width x + n"
+  (is "\<lbrakk>_; ?nbound\<rbrakk> \<Longrightarrow> _")
+proof-
+  assume "x \<noteq> 0"
+  hence 0:"width x = Suc (width x - 1)" using width_zero by (metis Suc_pred' neq0_conv)
+  from \<open>x \<noteq> 0\<close> have 1:"width x > 0" by (auto intro:gr_zeroI)
+  assume ?nbound
+  {
+    fix i
+    from \<open>?nbound\<close> have "i \<ge> size x \<Longrightarrow> \<not> x !! (i - n)" by (auto simp add:le_diff_conv2)
+    hence "(x << n) !! i = (n \<le> i \<and> x !! (i - n))" using nth_shiftl'[of x n i] by auto
+  } note corr = this
+  hence "\<forall> i > width x + n - 1. \<not> (x << n) !! i" by auto
+  moreover from corr have "(x << n) !! (width x + n - 1)"
+    using width_iff'[of "width x - 1" x] 1
+    by auto
+  ultimately have "width (x << n) = Suc (width x + n - 1)" using width_iff' by auto
+  thus ?thesis using 0 by simp
+qed
+
+lemma width_lshift'[simp]: "n \<le> size x - width x \<Longrightarrow> width (x << n) \<le> width x + n"
+  using width_zero width_lshift shiftl_0 by (metis eq_iff le0)
+
+lemma width_or[simp]: "width (x OR y) = max (width x) (width y)"
+proof-
+  {
+    fix a b
+    assume "width x = Suc a" and "width y = Suc b"
+    hence "width (x OR y) = Suc (max a b)"
+      using width_iff' word_ao_nth[of x y] max_less_iff_conj[of "a" "b"]
+      by (metis (no_types) max_def)
+  } note succs = this
+  thus ?thesis
+  proof (cases "width x = 0 \<or> width y = 0")
+    case True
+    thus ?thesis using width_zero word_log_esimps(3,9) by (metis max_0L max_0R)
+  next
+    case False
+    with succs show ?thesis by (metis max_Suc_Suc not0_implies_Suc)
+  qed
+qed
+
+definition rpad where "rpad x \<equiv> x << size x - width x"
+
+lemma rpad_low[simp]: "i < size x - width x \<Longrightarrow> \<not> (rpad x) !! i"
+  unfolding rpad_def by (simp add:nth_shiftl)
+
+lemma rpad_high[simp]:
+  "size x - width x \<le> i \<Longrightarrow> (rpad x) !! i = x !! (i + width x - size x)"
+  (is "i \<ge> ?bound \<Longrightarrow> ?goal i")
+proof-
+  fix i
+  assume "i \<ge> ?bound"
+  moreover have "i + width x - size x = i - ?bound" by simp
+  moreover have "x !! (i + width x - size x) \<Longrightarrow> i < size x" by (rule ccontr, auto)
+  ultimately show "?goal i"
+    unfolding rpad_def
+    by (subst nth_shiftl', metis)
+qed
+
+lemma rpad_inj: "width x = width y \<Longrightarrow> rpad x = rpad y \<Longrightarrow> x = y"
+  unfolding inj_def word_eq_iff
+proof (intro allI impI)
+  fix x y :: "'a word" and i
+  assume "width x = width y"
+  assume "\<forall>j < LENGTH('a). rpad x !! j = rpad y !! j"
+  hence "\<And> j. rpad x !! j = rpad y !! j" using test_bit_bin by blast
+  from this[of "i + size x - width x"] show "x !! i = y !! i"
+    using width_le_size[of x] by (simp add:\<open>width x = width y\<close>)
+qed
+
+definition pad_join :: "'a::len word \<Rightarrow> 'c::len itself \<Rightarrow> 'b::len word \<Rightarrow> 'c word"
+  ("_ \<diamond>\<^bsub>_\<^esub> _" [58, 1000, 59] 58) where
+  "x \<diamond>\<^bsub>l\<^esub> y \<equiv> rpad (ucast x) OR ucast y"
+
+notation (input) pad_join ("_ \<diamond>\<^sub>_ _" [58, 1000, 59] 58)
+
+abbreviation ucastl ("'(ucast')\<^bsub>_\<^esub> _" [1000, 100] 100) where
+  "(ucast)\<^bsub>l\<^esub> a \<equiv> ucast a :: 'b word" for l :: "'b::len0 itself"
+
+notation (input) ucastl ("'(ucast')\<^sub>_ _" [1000, 100] 100)
+
+lemma pad_join_high:
+  "\<lbrakk>width a \<le> size l; width b \<le> size l - width a; size l - width a \<le> i\<rbrakk>
+   \<Longrightarrow> (a \<diamond>\<^sub>l b) !! i = a !! (i + width a - size l)"
+  unfolding pad_join_def
+  using nth_ucast nth_width_high by fastforce
+ 
+lemma pad_join_high'[simp]:
+  "\<lbrakk>width a \<le> size l; width b \<le> size l - width a\<rbrakk> \<Longrightarrow> a !! i = (a \<diamond>\<^sub>l b) !! (i + size l - width a)"
+  using pad_join_high[of a l b "i + size l - width a"] by simp
+
+lemma pad_join_mid[simp]:
+  "\<lbrakk>width a \<le> size l; width b \<le> size l - width a; width b \<le> i; i < size l - width a\<rbrakk>
+   \<Longrightarrow> \<not> (a \<diamond>\<^sub>l b) !! i"
+  unfolding pad_join_def by auto
+
+lemma pad_join_low[simp]:
+  "\<lbrakk>width a \<le> size l; width b \<le> size l - width a; i < width b\<rbrakk> \<Longrightarrow> (a \<diamond>\<^sub>l b) !! i = b !! i"
+  unfolding pad_join_def by (auto simp add: nth_ucast)
+
+lemma pad_join_inj:
+  assumes eq:"a \<diamond>\<^sub>l b = c \<diamond>\<^sub>l d"
+  assumes width_al: "width a \<le> size l"
+  assumes width_ba:"width b \<le> size l - width a"
+  assumes width_dc:"width d \<le> size l - width c"
+  assumes eq_width:"width a = width c"
+  shows   "a = c" and "b = d"
+proof-
+  from eq have eq':"\<And>j. (a \<diamond>\<^sub>l b) !! j = (c \<diamond>\<^sub>l d) !! j"
+    using test_bit_bin unfolding word_eq_iff by blast
+  moreover from width_al and width_ba
+  have "\<And> i. a !! i = (a \<diamond>\<^sub>l b) !! (i + size l - width a)" by simp
+  moreover from width_al eq_width width_dc
+  have "\<And> i. c !! i = (c \<diamond>\<^sub>l d) !! (i + size l - width c)" by simp
+  ultimately show "a = c" using eq_width unfolding word_eq_iff by metis
+
+  {
+    fix n
+    from width_ba have "n < width b \<Longrightarrow> b !! n = (a \<diamond>\<^sub>l b) !! n" by simp
+    moreover from width_dc have "n < width d \<Longrightarrow> d !! n = (c \<diamond>\<^sub>l d) !! n" by simp
+    moreover have "n \<ge> width b \<Longrightarrow> \<not> b !! n" and "n \<ge> width d \<Longrightarrow> \<not> d !! n" by auto
+    ultimately have "b !! n = d !! n"
+      using eq'[of n] width_ba width_dc eq_width
+        pad_join_mid[of a l b n, OF width_al width_ba]
+        pad_join_mid[of c l d n, OF width_al[simplified eq_width] width_dc]
+      by (metis leI less_le_trans)
+  }
+  thus "b = d" unfolding word_eq_iff by simp
+qed
+
+lemma pad_join_inj'[dest!]:
+ "\<lbrakk>a \<diamond>\<^sub>l b = c \<diamond>\<^sub>l d;
+   width a \<le> size l;
+   width b \<le> size l - width a;
+   width d \<le> size l - width c;
+   width a = width c\<rbrakk> \<Longrightarrow> a = c \<and> b = d"
+  apply (rule conjI)
+  subgoal by (frule (4) pad_join_inj(1))
+  by (frule (4) pad_join_inj(2))
+
+definition join :: "'a::len word \<Rightarrow> 'c::len itself \<Rightarrow> nat \<Rightarrow> 'b::len word \<Rightarrow> 'c word"
+  ("_ \<^bsub>_\<^esub>\<Join>\<^bsub>_\<^esub> _" [60,1000,1000,59] 59) where
+  "(a \<^bsub>l\<^esub>\<Join>\<^bsub>n\<^esub> b) \<equiv> (ucast a << n) OR (ucast b)"
+
+notation (input) join ("_ \<^sub>_\<Join>\<^sub>_ _" [60,1000,1000,59] 59)
+
+lemma width_join:
+  "\<lbrakk>width a + n \<le> size l; width b \<le> n\<rbrakk> \<Longrightarrow> width (a \<^sub>l\<Join>\<^sub>n b) \<le> width a + n"
+  (is "\<lbrakk>?abound; ?bbound\<rbrakk> \<Longrightarrow> _")
+proof-
+  assume ?abound and ?bbound
+  moreover hence "width b \<le> size l" by simp
+  ultimately show ?thesis
+    using width_lshift'[of n "(ucast)\<^sub>l a"]
+    unfolding join_def
+    by simp
+qed
+
+lemma width_join'[simp]:
+  "\<lbrakk>width a + n \<le> size l; width b \<le> n; width a + n \<le> q\<rbrakk> \<Longrightarrow> width (a \<^sub>l\<Join>\<^sub>n b) \<le> q"
+  by (drule (1) width_join, simp)
+
+lemma join_high[simp]:
+  "\<lbrakk>width a + n \<le> size l; width b \<le> n; width a + n \<le> i\<rbrakk> \<Longrightarrow> \<not> (a \<^sub>l\<Join>\<^sub>n b) !! i"
+  by (drule (1) width_join, simp)
+
+lemma join_mid:
+  "\<lbrakk>width a + n \<le> size l; width b \<le> n; n \<le> i; i < width a + n\<rbrakk> \<Longrightarrow> (a \<^sub>l\<Join>\<^sub>n b) !! i = a !! (i - n)"
+  apply (subgoal_tac "i < size ((ucast)\<^sub>l a) \<and> size ((ucast)\<^sub>l a) = size l")
+  unfolding join_def
+  using word_ao_nth nth_ucast nth_width_high nth_shiftl'
+   apply (metis less_imp_diff_less order_trans word_size)
+  by simp
+
+lemma join_mid'[simp]:
+  "\<lbrakk>width a + n \<le> size l; width b \<le> n\<rbrakk> \<Longrightarrow> a !! i = (a \<^sub>l\<Join>\<^sub>n b) !! (i + n)"
+  using join_mid[of a n l b "i + n"] nth_width_high[of a i] join_high[of a n l b "i + n"]
+  by force
+
+lemma join_low[simp]:
+  "\<lbrakk>width a + n \<le> size l; width b \<le> n; i < n\<rbrakk> \<Longrightarrow> (a \<^sub>l\<Join>\<^sub>n b) !! i = b !! i"
+  unfolding join_def
+  by (simp add: nth_shiftl nth_ucast)
+
+lemma join_inj:
+  assumes eq:"a \<^sub>l\<Join>\<^sub>n b = c \<^sub>l\<Join>\<^sub>n d"
+  assumes "width a + n \<le> size l" and "width b \<le> n"
+  assumes "width c + n \<le> size l" and "width d \<le> n"
+  shows   "a = c" and "b = d"
+proof-
+  from assms show "a = c" unfolding word_eq_iff using join_mid' eq by metis
+  from assms show "b = d" unfolding word_eq_iff using join_low nth_width_high
+    by (metis eq less_le_trans not_le)
+qed
+
+lemma join_inj'[dest!]:
+  "\<lbrakk>a \<^sub>l\<Join>\<^sub>n b = c \<^sub>l\<Join>\<^sub>n d;
+    width a + n \<le> size l; width b \<le> n;
+    width c + n \<le> size l; width d \<le> n\<rbrakk> \<Longrightarrow> a = c \<and> b = d"
+  apply (rule conjI)
+  subgoal by (frule (4) join_inj(1))
+  by (frule (4) join_inj(2))
 
 text \<open>We start with some types and definitions that will be used later.\<close>
 
@@ -17,147 +381,178 @@ text \<open>
 type_synonym word24 = "192 word"
 type_synonym key = word24
 
-text \<open>
-  Instantiate @{class len0} type class to extract lengths from the @{type key} and other word
-  types avoiding repeated explicit numeric specification of the length.
-\<close>
-instantiation word :: (len0) len0 begin
-definition len_word[simp]: "len_of (_ :: 'a::len0 word itself) = LENGTH('a)"
-instance ..
-end
-
-text \<open>
-  We make some assumptions about the set of all procedures that can be registered in the system:
-  \begin{enumerate}
-  \item there is a hash function that maps the set of all procedures to the set of all keys;
-  \item this function is injective on the set;
-  \item number of all procedures is smaller or equal to the number of all keys.
-  \end{enumerate}
-  The assumptions concretize our hypothesis about the absence of procedure key collisions.
-  We formalize these assumptions by defining a corresponding Isar type class of allowed
-  procedures:
-\<close>
-
-class proc_class =
-  fixes key :: "'a \<Rightarrow> key"
-  assumes "CARD ('a) \<le> CARD (key)"
-  assumes key_inj:"inj key"
-
-text \<open>
-  To insure we don't introduce contradictions with these assumptions we build a sample model
-  of the set of all procedures. Although here use a relatively simple hash function, we
-  don't impose any additional requirements on the function, so it can be replaced with any real
-  cryptographic hash. We only need a single procedure-key pair to be calculated in advance, which
-  is easily achievable by computing the hash of some trivial allowed procedure.
-
-  We proceed with the corresponding definitions.
-\<close>
-
-subsection \<open>Dummy hash function\<close>
-
 text \<open>Byte is 8-bit machine word:\<close>
 type_synonym byte = "8 word"
 
-text \<open>
-  As an example we use a simple @{text djb2} hash function to compute 24-byte hash
-  of a list of bytes.
-\<close>
+section \<open>Storage state\<close>
 
-abbreviation "seed :: key \<equiv> 5381"
-fun djb2 :: "byte list \<Rightarrow> key" where
-  "djb2 []    =    seed" |
-  "djb2 (e # es)    =    (let h = djb2 es in (h << 5) + h + ucast e)"
+text \<open>32-byte machine words that are used to model keys and values of the storage.\<close>
+type_synonym word32 = "256 word" (* 32 bytes *)
 
 text \<open>
-  To formalize a notion of a set of procedures without hash collisions we nonconstructively
-  define a choice function to select exactly one arbitrary procedure for each possible key. In
-  reality this corresponds to the assumption that we never encounter hash collisions, so the
-  choice function can be assumed to be always well-defined on the current set of
-  procedure keys since the Hilbert epsilon operator's choice is arbitrary.
+  Storage is a function that takes a 32-byte word (key) and returns another
+  32-byte word (value).
 \<close>
+type_synonym storage = "word32 \<Rightarrow> word32"
 
-definition "choose_proc k \<equiv>
-  if k = seed then
-    {[]}
-  else if \<exists> p. djb2 p = k then
-    {SOME p. djb2 p = k}
-  else
-    {}"
+abbreviation "len (_ :: 'a::len word itself) \<equiv> TYPE('a)"
 
-lemma choose_proc[simp]: "x \<in> choose_proc k \<Longrightarrow> djb2 x = k"
-  unfolding choose_proc_def
-  by (auto split: if_splits intro: someI)
+no_notation join  ("_ \<^bsub>_\<^esub>\<Join>\<^bsub>_\<^esub> _" [60,1000,1000,59] 59)
+no_notation (input) join ("_ \<^sub>_\<Join>\<^sub>_ _" [60,1000,1000,59] 59)
 
-text \<open>The procedure corresponding to each key is unique.\<close>
-lemma[simp]: "\<lbrakk>x \<in> choose_proc k; y \<in> choose_proc k\<rbrakk> \<Longrightarrow> x = y"
-  unfolding choose_proc_def
-  by (simp split: if_splits)
+abbreviation join32 ("_ \<Join>\<^bsub>_\<^esub> _" [60,1000,59] 59) where
+  "a \<Join>\<^bsub>n\<^esub> b \<equiv> join a (len TYPE(word32)) (n * 8) b"
+abbreviation (output) join32_out ("_ \<Join>\<^bsub>_\<^esub> _" [60,1000,59] 59) where
+  "join32_out a n b \<equiv> join a (TYPE(256)) n b"
+notation (input) join32 ("_ \<Join>\<^sub>_ _" [60,1000,59] 59)
 
-subsection \<open>Dummy set of procedures\<close>
+no_notation pad_join  ("_ \<diamond>\<^bsub>_\<^esub> _" [58,1000,59] 58)
+no_notation (input) pad_join ("_ \<diamond>\<^sub>_ _" [58,1000,59] 58)
 
-text \<open>@{text Procs} is a set of all allowed procedures, without procedure key collisions:\<close>
-definition "Procs \<equiv> \<Union>k. choose_proc k"
+abbreviation pad_join32 ("_ \<diamond> _" [58,59] 58) where "a \<diamond> b \<equiv> pad_join a (len TYPE(word32)) b"
+abbreviation (output) pad_join32_out ("_ \<diamond> _" [58,59] 58) where
+  "pad_join32_out a b \<equiv> pad_join a (TYPE(256)) b"
 
-text \<open>
-  A new type @{text proc} is the sought instantiation of the @{class proc_class} type class.
-\<close>
+no_notation floor ("\<lfloor>_\<rfloor>")
 
-typedef proc = Procs
-  unfolding Procs_def choose_proc_def
-  by (rule exI[of _ "[]"], auto)
+consts rep :: "'a \<Rightarrow> 'b word" ("\<lfloor>_\<rfloor>")
 
-subsubsection \<open>Injectivity of the hash function\<close>
+datatype capability =
+    Call
+  | Reg
+  | Del
+  | Entry
+  | Write
+  | Log
+  | Gas
 
-text \<open>Hash function is injective on the domain of all procedures.\<close>
-lemma djb2_inj: "inj_on djb2 Procs"
-  unfolding inj_on_def Procs_def
-  by auto
+definition cap_type_rep :: "capability \<Rightarrow> byte" where
+  "cap_type_rep c \<equiv> case c of 
+      Call  \<Rightarrow> 0x3 
+    | Reg   \<Rightarrow> 0x4
+    | Del   \<Rightarrow> 0x5
+    | Entry \<Rightarrow> 0x6
+    | Write \<Rightarrow> 0x7
+    | Log   \<Rightarrow> 0x8
+    | Gas   \<Rightarrow> 0x9"
 
-subsubsection \<open>Number of all procedures\<close>
-
-text \<open>Here we introduce maximum number of registered procedure keys:\<close>
-
-abbreviation "max_nkeys \<equiv>  2 ^ LENGTH(key) :: nat"
-
-text \<open>Number of all procedures must be equal or smaller then the maximum number of procedure keys.\<close>
-
-lemma card_procs: "card Procs \<le> max_nkeys"
-  unfolding Procs_def
-proof (subst card_UN_disjoint)
-  show  "finite (UNIV :: key set)"
-    and "\<forall>i\<in>UNIV. finite (choose_proc i)"
-    unfolding choose_proc_def
-    by (simp_all split: if_splits)
-  show "\<forall>i\<in>UNIV. \<forall>j\<in>UNIV. i \<noteq> j \<longrightarrow> choose_proc i \<inter> choose_proc j = {}"
-    by (auto, drule choose_proc, simp)
-  show "(\<Sum>i\<in>UNIV. card (choose_proc i)) \<le> max_nkeys"
-    using sum_bounded_above[of "UNIV :: key set" "\<lambda> i. card (choose_proc i)", where K = 1]
-    unfolding choose_proc_def card_word
-    by auto
-qed
-
-subsubsection \<open>Instantiation\<close>
-
-text \<open>
-  Here we show that there the dummy type @{type proc} satisfies our assumptions.
-\<close>
-
-instantiation proc :: proc_class
+overloading
+  rep_cap_type \<equiv> "rep :: capability \<Rightarrow> byte"
 begin
-definition "key \<equiv> djb2 \<circ> Rep_proc"
-
-instance proof
-  have "CARD(key) = 2 ^ LENGTH(key)" by (simp add:card_word)
-  thus "CARD(proc) \<le> CARD(key)"
-    using card_procs
-          type_definition.card[OF proc.type_definition_proc]
-    by auto
-  show "inj (key :: proc \<Rightarrow> _)"
-    using djb2_inj proc.Rep_proc proc.Rep_proc_inject
-    unfolding inj_def key_proc_def inj_on_def
-    by force
-qed
+  fun rep_cap_type :: "capability \<Rightarrow> byte" where "rep_cap_type r = cap_type_rep r"
 end
+
+lemmas cap_type = rep_cap_type.simps cap_type_rep_def
+
+abbreviation (input) byte ("_\<^bsub>1\<^esub>" [1000] 1000) where "n\<^bsub>1\<^esub> \<equiv> n :: byte"
+
+lemma cap_type_rng[simp]: "\<lfloor>c ::capability\<rfloor>\<^bsub>1\<^esub> \<in> {0x3..0x9}"
+  unfolding cap_type by (simp split:capability.split)
+
+lemma cap_type_inj[simp]: "\<lfloor>c\<^sub>1 :: capability\<rfloor>\<^bsub>1\<^esub> = \<lfloor>c\<^sub>2\<rfloor> \<Longrightarrow> c\<^sub>1 = c\<^sub>2"
+  unfolding cap_type
+  by (simp split:capability.splits)
+
+lemma width_cap_type: "width (\<lfloor>x :: capability\<rfloor>\<^bsub>1\<^esub>+ 1) \<le> 4"
+proof (rule ccontr, drule not_le_imp_less)
+  assume "4 < width (\<lfloor>x\<rfloor>\<^bsub>1\<^esub> + 1)"
+  moreover hence "(\<lfloor>x\<rfloor>\<^bsub>1\<^esub> + 1) !! (width (\<lfloor>x\<rfloor>\<^bsub>1\<^esub> + 1) - 1)" using nth_width_msb by force
+  ultimately obtain n where "(\<lfloor>x\<rfloor>\<^bsub>1\<^esub> + 1) !! n" and "n \<ge> 4" by (metis le_step_down_nat nat_less_le)
+  thus False unfolding cap_type by (simp split:capability.splits)
+qed
+
+lemma width_cap_type'[simp]: "4 \<le> n \<Longrightarrow> width (\<lfloor>x :: capability\<rfloor>\<^bsub>1\<^esub> + 1) \<le> n"
+  using width_cap_type[of x] by simp
+
+lemma cap_type_nonzero[simplified rep_cap_type.simps, simp]: "\<lfloor>x :: capability\<rfloor>\<^bsub>1\<^esub> \<noteq> 0"
+  unfolding cap_type by (simp split:capability.splits)
+
+typedef capability_index = "{x :: byte. x < 0xff}" morphisms cap_index_rep cap_index_abs
+  by (intro exI[of _ "0"], simp)
+
+overloading
+  rep_cap_index \<equiv> "rep :: capability_index \<Rightarrow> byte"
+begin
+  fun rep_cap_index :: "capability_index \<Rightarrow> byte" where "rep_cap_index r = cap_index_rep r"
+end
+
+lemmas cap_index = rep_cap_index.simps cap_index_rep
+
+lemma width_cap_index: "width (\<lfloor>x :: capability_index\<rfloor>\<^bsub>1\<^esub>+ 1) \<le> 8"  by simp
+
+lemma width_cap_index'[simp]: "8 \<le> n \<Longrightarrow> width (\<lfloor>x :: capability_index\<rfloor>\<^bsub>1\<^esub> + 1) \<le> n" by simp
+
+lemma cap_index_nonzero[simplified rep_cap_index.simps, simp]: "\<lfloor>x :: capability_index\<rfloor>\<^bsub>1\<^esub> + 1 \<noteq> 0"
+  apply (insert cap_index[of x]) 
+  unfolding cap_index
+  using less_is_non_zero_p1 by auto
+
+type_synonym capability_offset = byte
+
+datatype data_offset =
+  Addr
+  | Index
+  | Ncaps capability
+  | Cap capability capability_index capability_offset
+
+definition data_offset_rep :: "data_offset \<Rightarrow> word32" where
+ "data_offset_rep off \<equiv> case off of
+     Addr         \<Rightarrow> 0x00\<^bsub>1\<^esub> \<Join>\<^sub>2 0x00\<^bsub>1\<^esub>   \<Join>\<^sub>1 0x00\<^bsub>1\<^esub>
+   | Index        \<Rightarrow> 0x00\<^bsub>1\<^esub> \<Join>\<^sub>2 0x00\<^bsub>1\<^esub>   \<Join>\<^sub>1 0x01\<^bsub>1\<^esub>
+   | Ncaps ty     \<Rightarrow> \<lfloor>ty\<rfloor>\<^bsub>1\<^esub> \<Join>\<^sub>2 0x00\<^bsub>1\<^esub>   \<Join>\<^sub>1 0x00\<^bsub>1\<^esub>
+   | Cap ty i off \<Rightarrow> \<lfloor>ty\<rfloor>\<^bsub>1\<^esub> \<Join>\<^sub>2 \<lfloor>i\<rfloor>\<^bsub>1\<^esub> + 1 \<Join>\<^sub>1 off"
+
+overloading
+  rep_data_offset \<equiv> "rep :: data_offset \<Rightarrow> word32"
+begin
+  fun rep_data_offset :: "data_offset \<Rightarrow> word32" where "rep_data_offset off = data_offset_rep off"
+end
+
+lemmas data_offset = rep_data_offset.simps data_offset_rep_def
+
+abbreviation (input) word32 ("_\<^bsub>32\<^esub>" [1000] 1000) where "n\<^bsub>32\<^esub> \<equiv> n :: word32"
+
+lemma data_offset_inj[simplified rep_data_offset.simps,simp]:
+  "\<lfloor>d\<^sub>1 :: data_offset\<rfloor>\<^bsub>32\<^esub> = \<lfloor>d\<^sub>2 :: data_offset\<rfloor>\<^bsub>32\<^esub> \<Longrightarrow> d\<^sub>1 = d\<^sub>2"
+  unfolding data_offset
+  by (auto split:data_offset.splits simp add:cap_index_rep_inject)
+
+datatype address =
+   Heap_proc key data_offset
+  | Nprocs
+  | Proc_key nat
+  | Kernel
+  | Curr_proc
+  | Entry_proc
+
+abbreviation "pref \<equiv> 0xffffffff :: word32"
+
+abbreviation "index i \<equiv> of_nat i :: key"
+
+definition addr_rep :: "address \<Rightarrow> word32" where
+  "addr_rep a \<equiv> case a of
+    Heap_proc k ofs \<Rightarrow> pref \<Join>\<^sub>1 0x00\<^bsub>1\<^esub> \<diamond>      k  \<Join>\<^sub>3 \<lfloor>ofs\<rfloor>\<^bsub>32\<^esub>
+  | Nprocs          \<Rightarrow> pref \<Join>\<^sub>1 0x01\<^bsub>1\<^esub> \<diamond> 0x00\<^bsub>1\<^esub> \<Join>\<^sub>3 0x00\<^bsub>1\<^esub> \<Join>\<^sub>2 0x00\<^bsub>1\<^esub> \<Join>\<^sub>1 0x00\<^bsub>1\<^esub>
+  | Proc_key i      \<Rightarrow> pref \<Join>\<^sub>1 0x01\<^bsub>1\<^esub> \<diamond> index i \<Join>\<^sub>3 0x00\<^bsub>1\<^esub> \<Join>\<^sub>2 0x00\<^bsub>1\<^esub> \<Join>\<^sub>1 0x00\<^bsub>1\<^esub>
+  | Kernel          \<Rightarrow> pref \<Join>\<^sub>1 0x02\<^bsub>1\<^esub> \<diamond> 0x00\<^bsub>1\<^esub> \<Join>\<^sub>3 0x00\<^bsub>1\<^esub> \<Join>\<^sub>2 0x00\<^bsub>1\<^esub> \<Join>\<^sub>1 0x00\<^bsub>1\<^esub>
+  | Curr_proc       \<Rightarrow> pref \<Join>\<^sub>1 0x03\<^bsub>1\<^esub> \<diamond> 0x00\<^bsub>1\<^esub> \<Join>\<^sub>3 0x00\<^bsub>1\<^esub> \<Join>\<^sub>2 0x00\<^bsub>1\<^esub> \<Join>\<^sub>1 0x00\<^bsub>1\<^esub>
+  | Entry_proc      \<Rightarrow> pref \<Join>\<^sub>1 0x04\<^bsub>1\<^esub> \<diamond> 0x00\<^bsub>1\<^esub> \<Join>\<^sub>3 0x00\<^bsub>1\<^esub> \<Join>\<^sub>2 0x00\<^bsub>1\<^esub> \<Join>\<^sub>1 0x00\<^bsub>1\<^esub>"
+
+overloading
+  rep_addr \<equiv> "rep :: address \<Rightarrow> word32"
+begin
+  fun rep_addr :: "address \<Rightarrow> word32" where "rep_addr off = addr_rep off"
+end
+
+lemmas address = rep_addr.simps addr_rep_def
+
+lemma address_inj[simplified rep_addr.simps, simp]:
+  "\<lfloor>a\<^sub>1 :: address\<rfloor>\<^bsub>32\<^esub> = \<lfloor>a\<^sub>2 :: address\<rfloor>\<^bsub>32\<^esub> \<Longrightarrow> a\<^sub>1 = a\<^sub>2"
+  unfolding address
+  apply (split address.splits)
+       apply (split address.splits)
+            apply (auto)[1]
+  sorry
 
 section \<open>Abstract state\<close>
 
@@ -167,8 +562,9 @@ text \<open>
   direct product of procedure indexes and procedure data.
 \<close>
 
-record ('p :: proc_class) abs =
-  procs    :: "key \<rightharpoonup> nat \<times> 'p"
+record abs =
+  keys      :: "key set"
+  proc_id   :: "key \<Rightarrow> nat"
 
 subsection \<open>Abbreviations\<close>
 
@@ -178,26 +574,13 @@ text \<open>
 \<close>
 
 text \<open>Number of the procedures in the abstract state:\<close>
-abbreviation "nprocs \<sigma> \<equiv> card (dom (procs \<sigma>))"
-
-text \<open>List of procedure keys:\<close>
-abbreviation "proc_keys \<sigma> \<equiv> dom (procs \<sigma>)"
+abbreviation "nprocs \<sigma> \<equiv> card (keys \<sigma>)"
 
 text \<open>List of procedure indexes:\<close>
 abbreviation "proc_ids \<sigma> \<equiv> {1..nprocs \<sigma>}"
 
-text \<open>Pair with the procedure index and procedure itself for a given key:\<close>
-abbreviation "proc \<sigma> k \<equiv> the (procs \<sigma> k)"
-
-text \<open>Procedure index for a given key:\<close>
-abbreviation "proc_id \<sigma> k \<equiv> fst (proc \<sigma> k)"
-
-text \<open>Procedure itself for a given key:\<close>
-abbreviation "proc_bdy \<sigma> k \<equiv> snd (proc \<sigma> k)"
-
 text \<open>Maximum number of procedures in the abstract state:\<close>
-abbreviation "proc_id_len \<equiv> 24"
-abbreviation "max_nprocs \<equiv> 2 ^ proc_id_len - 1 :: nat"
+abbreviation "max_nprocs \<equiv> 2 ^ LENGTH(key) - 1 :: nat"
 
 subsubsection \<open>Well-formedness\<close>
 
@@ -211,66 +594,59 @@ text \<open>
   \end{enumerate}
 \<close>
 
-definition "procs_rng_wf \<sigma> \<equiv>
-  (\<forall> k \<in> proc_keys \<sigma>. proc_id \<sigma> k \<in> proc_ids \<sigma> \<and> key (proc_bdy \<sigma> k) = k) \<and>
-   nprocs \<sigma> \<le> max_nprocs"
+definition "proc_id_rng_wf \<sigma> \<equiv>
+  (\<forall> k \<in> keys \<sigma>. proc_id \<sigma> k \<in> proc_ids \<sigma>) \<and>
+  nprocs \<sigma> \<le> max_nprocs"
 
 text \<open>Procedure indexes must be injective.\<close>
-definition "procs_map_wf \<sigma> \<equiv> inj_on (proc_id \<sigma>) (proc_keys \<sigma>)"
+definition "procs_map_wf \<sigma> \<equiv> inj_on (proc_id \<sigma>) (keys \<sigma>)"
 
 text \<open>Abstract state is well-formed if the previous two properties are satisfied.\<close>
-definition abs_wf :: "'p :: proc_class abs \<Rightarrow> bool" ("\<turnstile> _" [60] 60) where
-  "\<turnstile>\<sigma> \<equiv>
-     procs_rng_wf \<sigma>
-   \<and> procs_map_wf \<sigma>"
+definition abs_wf :: "abs \<Rightarrow> bool" ("\<turnstile> _" [60] 60) where
+  "\<turnstile> \<sigma> \<equiv>
+      proc_id_rng_wf \<sigma>
+    \<and> procs_map_wf \<sigma>"
 
-lemmas procs_rng_wf = abs_wf_def procs_rng_wf_def
+lemmas procs_rng_wf = abs_wf_def proc_id_rng_wf_def
 
 lemmas procs_map_wf = abs_wf_def procs_map_wf_def
 
-section \<open>Storage state\<close>
-
-text \<open>32-byte machine words that are used to model keys and values of the storage.\<close>
-type_synonym word32 = "256 word" (* 32 bytes *)
-
-text \<open>
-  Storage is a function that takes a 32-byte word (key) and returns another
-  32-byte word (value).
-\<close>
-type_synonym storage = "word32 \<Rightarrow> word32"
-
 text \<open>Storage key that corresponds to the number of procedures in the list:\<close>
-abbreviation nprocs_addr ("@nprocs") where "nprocs_addr \<equiv> 0xffffffff01 << (27 * 8) :: word32"
+abbreviation nprocs_addr ("@nprocs") where "nprocs_addr \<equiv> 0xffffffff01 0...0 :: word32"
+
+lemma "width (0xffffffff01 :: word32) = 5 * 8 " unfolding width_def Least_def
+  apply (rule the_equality)
+  apply simp
 
 text \<open>Storage key that corresponds to the procedure key with index i:\<close>
 definition proc_key_addr ("@proc'_key") where "@proc_key i \<equiv> @nprocs OR of_nat i"
 
 text \<open>Procedure index that corresponds to some procedure key address:\<close>
-definition id_of_proc_key_addr where "id_of_proc_key_addr a \<equiv> unat (@nprocs XOR a)"
+definition id_of_proc_key_addr ("@proc'_key.id") where "@proc_key.id a \<equiv> unat (@nprocs XOR a)"
 
 text \<open>Maximum number of procedures in the kernel, but in the form of a 32-byte machine word:\<close>
 abbreviation "max_nprocs_word \<equiv> 2 ^ proc_id_len - 1 :: word32"
 
 text \<open>Declare some lemmas as simplification rules:\<close>
-declare unat_word_ariths[simp] word_size[simp]
+
 
 text \<open>Storage address that corresponds to the procedure heap for a given procedure key:\<close>
 abbreviation "proc_heap_mask \<equiv>  0xffffffff00 << (27 * 8) :: word32"
-abbreviation proc_heap_addr :: "key \<Rightarrow> word32" ("@proc'_heap") where
+definition proc_heap_addr :: "key \<Rightarrow> word32" ("@proc'_heap") where
   "@proc_heap k \<equiv> proc_heap_mask OR ((ucast k) << (3 * 8))"
 
 text \<open>Storage address that corresponds to the procedure address:\<close>
-abbreviation proc_addr_addr ("@proc'_addr") where "@proc_addr k \<equiv> @proc_heap k"
+definition proc_addr_addr ("@proc'_addr") where "@proc_addr k \<equiv> @proc_heap k"
 
 text \<open>Storage address that corresponds to the procedure index:\<close>
-abbreviation proc_id_addr ("@proc'_id") where "@proc_id k \<equiv> @proc_heap k OR 0x01"
+definition proc_id_addr ("@proc'_id") where "@proc_id k \<equiv> @proc_heap k OR 0x01"
 
 text \<open>Procedure key that corresponds to some procedure index address:\<close>
-abbreviation proc_key_of_id_addr :: "word32 \<Rightarrow> key" where
-  "proc_key_of_id_addr a \<equiv> ucast (proc_heap_mask XOR a)"
+definition proc_key_of_id_addr :: "word32 \<Rightarrow> key" ("@proc'_id.key") where
+  "@proc_id.key a \<equiv> ucast (proc_heap_mask XOR a)"
 
 text \<open>Storage address that corresponds to the number of capabilities of type @{text t}:\<close>
-abbreviation ncaps_addr :: "key \<Rightarrow> byte \<Rightarrow> word32" ("@ncaps") where
+definition ncaps_addr :: "key \<Rightarrow> byte \<Rightarrow> word32" ("@ncaps") where
   "@ncaps k t \<equiv> @proc_heap k OR (ucast t << 2 * 8)"
 
 text \<open>
@@ -278,7 +654,7 @@ text \<open>
   with index @{text "i - 1"},
   and offset @{text off} into that capability:
 \<close>
-abbreviation proc_cap_addr :: "key \<Rightarrow> byte \<Rightarrow> byte \<Rightarrow> byte \<Rightarrow> word32" ("@proc'_cap") where
+definition proc_cap_addr :: "key \<Rightarrow> byte \<Rightarrow> byte \<Rightarrow> byte \<Rightarrow> word32" ("@proc'_cap") where
   "@proc_cap k t i off \<equiv> @proc_heap k OR (ucast t << 2 * 8) OR (ucast i << 8) OR ucast off"
 
 subsection \<open>Lemmas\<close>
@@ -325,7 +701,7 @@ qed
 
 text \<open>Computing procedure key address by its id is an invertible operation.\<close>
 lemma id_of_key_addr_inv[simp]:
-   "i \<le> max_nprocs \<Longrightarrow> id_of_proc_key_addr (@proc_key i) = i"
+   "i \<le> max_nprocs \<Longrightarrow> @proc_key.id (@proc_key i) = i"
    (is "?ibound \<Longrightarrow> ?rev")
 proof-
   assume 0:"?ibound"
@@ -385,6 +761,55 @@ definition proc_key_addrs ("@proc'_keys") where
   "@proc_keys \<sigma> \<equiv> { @proc_key (proc_id \<sigma> k) | k. k \<in> proc_keys \<sigma> }"
 
 definition proc_id_addrs ("@proc'_ids") where "@proc_ids \<sigma> \<equiv> { @proc_id k | k. k \<in> proc_keys \<sigma> }"
+
+datatype region =
+    Nprocs
+  | Proc_key nat
+  | Proc_heap key
+
+definition "nprocs_range \<equiv> {unat @nprocs}"
+definition "proc_key_range n \<equiv> {unat @nprocs + n}"
+definition "proc_heap_range k \<equiv> {unat (@proc_heap k)..unat (@proc_heap k) + 0xFFFF}"
+
+lemma proc_heap_mask_low_zeros: "\<forall>i\<in>{0..<LENGTH(key) + 3 * 8}. \<not> proc_heap_mask !! i"
+  by (subst nth_shiftl, auto)
+
+lemma proc_key_lshift_high_zeros:
+  "\<forall>i\<in>{LENGTH(key) + 3 * 8..LENGTH(word32)}. \<not> (ucast (k :: key) << (3 * 8) :: word32) !! i"
+  by (auto simp add:nth_shiftl nth_ucast test_bit_bin[of k])
+
+lemma proc_heap_mask_and_key_lshift: "proc_heap_mask AND (ucast (k :: key) << (3 * 8)) = 0"
+  using proc_heap_mask_low_zeros proc_key_lshift_high_zeros
+  by (auto simp add: word_eq_iff word_ao_nth)
+
+lemma proc_heap_range_nat:
+  "a \<in> proc_heap_range k =
+    (let b = unat proc_heap_mask + unat k * 2 ^ (3 * 8) in a \<in> {b..b+0xFFFF})"
+proof-
+  let ?in_range = "\<lambda> x. x < 2 ^ LENGTH(word32)"
+  have "is_up (ucast :: key \<Rightarrow> word32)"
+    unfolding is_up_def source_size_def target_size_def by simp
+  hence 0:"unat (ucast k :: word32) = unat k" unfolding unat_def by (simp add:uint_up_ucast)
+  hence "?in_range (unat (ucast k :: word32) * 2 ^ (3 * 8))" by (unat_arith, simp)
+  with 0 have 1:"unat k * 2 ^ (3 * 8) = unat ((ucast k :: word32) << (3 * 8))"
+    by (simp add:unat_mult_lem shiftl_t2n)
+  have "?in_range (unat proc_heap_mask + unat k * 2 ^ (3 * 8))" by (unat_arith, simp)
+  with 1 have 2:"?in_range (unat proc_heap_mask + unat ((ucast k :: word32) << (3 * 8)))" by simp
+  show ?thesis
+    unfolding proc_heap_range_def proc_heap_addr_def Let_def
+    apply (subst 1)+
+    apply (subst iffD1[OF unat_add_lem 2[unfolded len_word], symmetric])+
+    apply (subst (1 2) word_plus_and_or[symmetric])
+    using word_plus_and_or[symmetric] proc_heap_mask_and_key_lshift by simp
+qed
+
+function region :: "word32 \<Rightarrow> region" where
+  "unat a \<in> nprocs_range \<Longrightarrow> region a = Nprocs"
+| "\<exists> n. unat a \<in> proc_key_range n \<Longrightarrow> region a = Proc_key (THE n. unat a \<in> proc_key_range n)"
+| "\<exists> k. unat a \<in> proc_heap_range k \<Longrightarrow> region a = Proc_heap (THE k. unat a \<in> proc_heap_range k)"
+  unfolding nprocs_range_def proc_key_range_def proc_heap_range_def
+
+
 (* TODO: add some lemmas? *)
 
 text \<open>Procedure id can be converted to a 32-byte word without overflow.\<close>
@@ -396,13 +821,12 @@ lemma proc_id_inv[simp]:
 text \<open>Moreover, any procedure id is non-zero and bounded by the maximum available id
       (@{const max_nprocs_word}).\<close>
 lemma proc_id_bounded[intro]:
-  "\<lbrakk>\<turnstile> \<sigma>; k \<in> proc_keys \<sigma>\<rbrakk> \<Longrightarrow>
-    (0 :: word32) < of_nat (proc_id \<sigma> k) \<and> of_nat (proc_id \<sigma> k) \<le> max_nprocs_word"
+  "\<lbrakk>\<turnstile> \<sigma>; k \<in> proc_keys \<sigma>\<rbrakk> \<Longrightarrow> of_nat (proc_id \<sigma> k) \<in> {0<..max_nprocs_word}"
   by (simp add:word_le_nat_alt word_less_nat_alt, force simp add:procs_rng_wf)
 
 text \<open>Since it's non-zero, any procedure id has a non-zero bit in its lower part.\<close>
 lemma proc_id_low_one:
-  "0 < n \<and> n \<le> max_nprocs_word \<Longrightarrow> \<exists>i\<in>{0..<proc_id_len}. n !! i"
+  "n \<in> {0<..max_nprocs_word} \<Longrightarrow> \<exists>i\<in>{0..<proc_id_len}. n !! i"
   (is "?nbound \<Longrightarrow> _")
 proof-
   assume 0:"?nbound"
@@ -414,7 +838,7 @@ qed
 text \<open>And procedure key address is different from the address of the \# of procedures
       (@{text "@nprocs"}).\<close>
 lemma proc_key_addr_neq_nprocs_key:
-  "0 < n \<and> n \<le> max_nprocs_word \<Longrightarrow> @nprocs OR n \<noteq> @nprocs"
+  "n \<in> {0<..max_nprocs_word} \<Longrightarrow> @nprocs OR n \<noteq> @nprocs"
   (is "?nbound \<Longrightarrow> _")
 proof-
   assume 0:"?nbound"
@@ -435,7 +859,7 @@ text \<open>Also procedure index address is different from the address of the \#
 lemma proc_id_addr_neq_nprocs_key: "@proc_id k \<noteq> @nprocs"
 proof
   have 0: "\<not> @nprocs !! 0" by auto
-  have 1: "@proc_id k !! 0" using lsb0 test_bit_1 by blast
+  have 1: "@proc_id k !! 0" using lsb0 test_bit_1 unfolding proc_id_addr_def by blast
   assume "@proc_id k = @nprocs"
   hence "(@proc_id k !! 0) = (@nprocs !! 0)" by auto
   thus "False" using 0 1 by auto
@@ -453,17 +877,17 @@ qed
 
 text \<open>The function mapping procedure id to the corresponding procedure key
       (in some abstract state):\<close>
-definition "proc_key_of_id \<sigma> \<equiv> the_inv_into (proc_keys \<sigma>) (proc_id \<sigma>)"
+definition proc_id_inv ("proc'_id\<inverse>") where "proc_id\<inverse> \<sigma> \<equiv> the_inv_into (proc_keys \<sigma>) (proc_id \<sigma>)"
 
 text \<open>Invertibility of computing procedure id (by its key) in any abstract state:\<close>
-lemma proc_key_of_id_inv[simp]: "\<lbrakk>\<turnstile>\<sigma>; k \<in> proc_keys \<sigma>\<rbrakk> \<Longrightarrow> proc_key_of_id \<sigma> (proc_id \<sigma> k) = k"
-  unfolding procs_map_wf proc_key_of_id_def
+lemma proc_key_of_id_inv[simp]: "\<lbrakk>\<turnstile>\<sigma>; k \<in> proc_keys \<sigma>\<rbrakk> \<Longrightarrow> proc_id\<inverse> \<sigma> (proc_id \<sigma> k) = k"
+  unfolding procs_map_wf proc_id_inv_def
   using the_inv_into_f_f by fastforce
 
 text \<open>For any valid procedure id in any well-formed abstract state there is a procedure key that
      corresponds to the id (this is not so trivial as we keep the reverse mapping in
      the abstract state, the proof is implicitly based on the pigeonhole principle).\<close>
-lemma proc_key_exists: "\<lbrakk>\<turnstile>\<sigma>; i\<in>{1..nprocs \<sigma>}\<rbrakk> \<Longrightarrow> \<exists>k\<in>proc_keys \<sigma>. proc_id \<sigma> k = i"
+lemma proc_key_exists: "\<lbrakk>\<turnstile>\<sigma>; i \<in> proc_ids \<sigma>\<rbrakk> \<Longrightarrow> \<exists> k \<in> proc_keys \<sigma>. proc_id \<sigma> k = i"
 proof (rule ccontr, subst (asm) bex_simps(8))
   let ?rng = "{1 .. nprocs \<sigma>}"
   let ?prj = "proc_id \<sigma> ` proc_keys \<sigma>"
@@ -485,16 +909,16 @@ proof (rule ccontr, subst (asm) bex_simps(8))
   finally show False ..
 qed
 
-text \<open>The function @{const proc_key_of_id} gives valid procedure ids.\<close>
-lemma proc_key_of_id_in_keys[simp]: "\<lbrakk>\<turnstile>\<sigma>; i\<in>{1..nprocs \<sigma>}\<rbrakk> \<Longrightarrow> proc_key_of_id \<sigma> i \<in> proc_keys \<sigma>"
+text \<open>The function @{term "proc_id\<inverse>"} gives valid procedure ids.\<close>
+lemma proc_key_of_id_in_keys[simp]: "\<lbrakk>\<turnstile>\<sigma>; i \<in> proc_ids \<sigma>\<rbrakk> \<Longrightarrow> proc_id\<inverse> \<sigma> i \<in> proc_keys \<sigma>"
   using proc_key_exists the_inv_into_into[of "proc_id \<sigma>" "proc_keys \<sigma>" i]
-  unfolding proc_key_of_id_def procs_map_wf
+  unfolding proc_id_inv_def procs_map_wf
   by fast
 
 text \<open>Invertibility of computing procedure key (by its id) in any abstract state:\<close>
-lemma proc_key_of_id_inv'[simp]: "\<lbrakk>\<turnstile>\<sigma>; i\<in>{1..nprocs \<sigma>}\<rbrakk> \<Longrightarrow> proc_id \<sigma> (proc_key_of_id \<sigma> i) = i"
+lemma proc_key_of_id_inv'[simp]: "\<lbrakk>\<turnstile>\<sigma>; i \<in> proc_ids \<sigma>\<rbrakk> \<Longrightarrow> proc_id \<sigma> (proc_id\<inverse> \<sigma> i) = i"
   using proc_key_exists f_the_inv_into_f[of "proc_id \<sigma>" "proc_keys \<sigma>" i]
-  unfolding proc_key_of_id_def procs_map_wf
+  unfolding proc_id_inv_def procs_map_wf
   by fast
 
 subsection \<open>Any well-formed abstract state can be stored\<close>
@@ -503,8 +927,8 @@ text \<open>A mapping of addresses with specified (defined) values:\<close>
 definition
   "con_wit_map \<sigma> :: _ \<rightharpoonup> word32 \<equiv>
         [@nprocs \<mapsto> of_nat (nprocs \<sigma>)]
-     ++ (Some \<circ> ucast \<circ> proc_key_of_id \<sigma> \<circ> id_of_proc_key_addr) |` @proc_keys \<sigma>
-     ++ (Some \<circ> ucast \<circ> proc_key_of_id_addr) |` @proc_ids \<sigma>"
+     ++ (Some \<circ> ucast \<circ> proc_id\<inverse> \<sigma> \<circ> @proc_key.id) |` @proc_keys \<sigma>
+     ++ (Some \<circ> ucast \<circ> @proc_id.key) |` @proc_ids \<sigma>"
 
 text \<open>A sample storage extending the above mapping with default zero values:\<close>
 definition "con_wit \<sigma> \<equiv> override_on zero_storage (the \<circ> con_wit_map \<sigma>) (dom (con_wit_map \<sigma>))"
@@ -529,8 +953,7 @@ proof (intro exI[of _ "con_wit \<sigma>"] conjI)
     apply (subst override_on_apply_in, simp, subst map_add_dom_app_simps(3))
     apply (rule restrict_rule, auto, subst map_add_dom_app_simps(3))
     by (auto simp add:procs_rng_wf)
-  from wf have "\<And> k. k \<in> proc_keys \<sigma> \<Longrightarrow>
-                     proc_key_of_id \<sigma> (id_of_proc_key_addr (@proc_key (proc_id \<sigma> k))) = k"
+  from wf have "\<And> k. k \<in> proc_keys \<sigma> \<Longrightarrow> proc_id\<inverse> \<sigma> (@proc_key.id (@proc_key (proc_id \<sigma> k))) = k"
     by (subst id_of_key_addr_inv) (auto simp add:procs_rng_wf, force)
   thus "\<forall>k\<in>proc_keys \<sigma>. con_wit \<sigma> (@proc_key (proc_id \<sigma> k)) = ucast k"
     unfolding con_wit proc_key_addrs_def proc_id_addrs_def
@@ -580,11 +1003,11 @@ proof (intro abs.equality ext option.expand, rule ccontr)
     assume models1:"s \<tturnstile> \<sigma>" and models2:"s \<tturnstile> \<sigma>'"
     fix i p
     assume Some:"procs \<sigma> x = Some (i, p)"
-    with wf1 have "i\<in>{1..nprocs \<sigma>}" unfolding procs_rng_wf Ball_def by auto
+    with wf1 have "i \<in> proc_ids \<sigma>" unfolding procs_rng_wf Ball_def by auto
     with wf2 models1 models2
-    have "proc_key_of_id \<sigma>' i \<in> proc_keys \<sigma>' \<and> proc_id \<sigma>' (proc_key_of_id \<sigma>' i) = i"
+    have "proc_id\<inverse> \<sigma>' i \<in> proc_keys \<sigma>' \<and> proc_id \<sigma>' (proc_id\<inverse> \<sigma>' i) = i"
       unfolding models_nprocs by simp
-    moreover with Some models1 models2 have "proc_key_of_id \<sigma>' i = x"
+    moreover with Some models1 models2 have "proc_id\<inverse> \<sigma>' i = x"
       unfolding models_proc_keys
       using key_upcast by (metis domI fst_conv option.sel)
     ultimately have "procs \<sigma>' x \<noteq> None" by auto
@@ -707,7 +1130,7 @@ proof (intro conjI ballI)
 
     thus "\<exists>p :: 'p. ucast (key p) = s (@proc_key i)"
       using wf models
-      apply (intro exI[of _ "proc_bdy \<sigma> (proc_key_of_id \<sigma> i)"])
+      apply (intro exI[of _ "proc_bdy \<sigma> (proc_id\<inverse> \<sigma> i)"])
       by (elim elim_id, simp add:models_proc_keys procs_rng_wf)
   }
   {

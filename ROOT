@@ -1,4 +1,4 @@
-session "cap9-spec" = "HOL-Word" +
+session "cap9-spec" = "Word_Lib" +
   description {*
     Author: Mikhail Mandrykin, ISP RAS
     Author: Ilya Shchepetkov, ISP RAS
