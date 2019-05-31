@@ -1,4 +1,4 @@
-session "cap9-spec" = "Word_Lib" +
+session "cap9-spec" = "HOL-Word" +
   description {*
     Author: Mikhail Mandrykin, ISP RAS
     Author: Ilya Shchepetkov, ISP RAS
@@ -11,6 +11,9 @@ session "cap9-spec" = "Word_Lib" +
     document_variants = "Cap9IsabelleSpec",
     quick_and_dirty = true
   ]
+  theories [document = false]
+    "Word_Lib/Word_Lemmas"
+    "HOL-Library.Adhoc_Overloading"
   theories
     Cap9
   document_files

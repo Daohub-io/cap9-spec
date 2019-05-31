@@ -3,14 +3,18 @@ section \<open>Preliminaries\<close>
 theory Cap9
 imports
   "HOL-Word.Word"
+  "HOL-Library.Adhoc_Overloading"
   "Word_Lib/Word_Lemmas"
 begin
 
-section \<open>Preliminaries\<close>
+subsection \<open>Type class instantiations\<close>
 
 text \<open>
-  Instantiate @{class len0} type class to extract lengths from word
-  types avoiding repeated explicit numeric specification of the length.
+  Instantiate @{class len} type class to extract lengths from word
+  types avoiding repeated explicit numeric specification of the length e.g.
+  @{text "LENGTH(byte)"} or @{text "LENGTH('a :: len word)"} instead of @{text 8} or
+  @{term "LENGTH('a :: len)"}, where @{text "'a"} cannot be directly extracted from a type
+  such as @{text "'a word"}.
 \<close>
 
 instantiation word :: (len) len begin
@@ -18,13 +22,34 @@ definition len_word[simp]: "len_of (_ :: 'a::len word itself) = LENGTH('a)"
 instance by (standard, simp)
 end
 
-instantiation itself :: (len) size
-begin
+text \<open>
+  Instantiate @{class size} type class for types of the form @{text "'a itself"}. This allows
+  us to parametrize operations by word lengths using the dummy variables of type
+  @{text "'a word itself"}. The operations cannot be directly parametrized by numbers as there is
+  no lifting from term numbers to type numbers due to the lack of dependent types.
+\<close>
+
+instantiation itself :: (len) size begin
 definition size_itself where [simp, code]: "size (n::'a::len itself) = LENGTH('a)"
 instance ..
 end
 
 declare unat_word_ariths[simp] word_size[simp]
+
+subsection \<open>Word width\<close>
+
+text \<open>
+  We introduce definition of the least numer of bits to hold the current value of a word. This is
+  needed because in our specification we often word with @{const "ucast"}'ed values
+  (right aligned subranges of bits), largely
+  again due to the lack of dependent types (or true type-level functions),
+  e.g. the it's hard to specify that the length of
+  @{text "a \<Join> b"} (where @{text "\<Join>"} stands for concatenation) is the sum of the length of
+  @{text "a"} and @{text "b"}, since length is a type parameter and there's no equivalent of
+  sum on the type level. So we instead fix the length of @{text "a \<Join> b"} to be the maximum
+  possible one (say, 32 bytes) and then use conditions of the form @{text "width a \<le> s"} to
+  specify that the actual ``size'' of @{text "a"} is @{text "s"}.
+\<close>
 
 definition "width w \<equiv> LEAST n. unat w < 2 ^ n" for w :: "'a::len word"
 
@@ -207,110 +232,143 @@ proof-
   qed
 qed
 
-definition rpad where "rpad x \<equiv> x << size x - width x"
+subsection \<open>Right zero-padding\<close>
 
-lemma rpad_low[simp]: "i < size x - width x \<Longrightarrow> \<not> (rpad x) !! i"
+text \<open>
+  Here's the first time we use @{const width}. If @{text x} is a value of size @{text n}
+  right-aligned in a word of size @{text "s = size x"} (note there's nowhere to keep the value n,
+  since the size of @{text x} is some @{text "s \<ge> n"}, so we require it to be
+  provided explicitly),
+  then @{text "rpad n x"} will move the value @{text x} to the left. For the operation to be
+  correct (no losing of significant higher bits) we need the precondition @{text "width x \<le> n"}
+  in all the lemmas, hence the need for @{const width}.
+\<close>
+
+definition rpad where "rpad n x \<equiv> x << size x - n"
+
+lemma rpad_low[simp]: "\<lbrakk>width x \<le> n; i < size x - n\<rbrakk> \<Longrightarrow> \<not> (rpad n x) !! i"
   unfolding rpad_def by (simp add:nth_shiftl)
 
 lemma rpad_high[simp]:
-  "size x - width x \<le> i \<Longrightarrow> (rpad x) !! i = x !! (i + width x - size x)"
-  (is "i \<ge> ?bound \<Longrightarrow> ?goal i")
+  "\<lbrakk>width x \<le> n; n \<le> size x; size x - n \<le> i\<rbrakk> \<Longrightarrow> (rpad n x) !! i = x !! (i + n - size x)"
+  (is "\<lbrakk>?xbound; ?nbound; i \<ge> ?ibound\<rbrakk> \<Longrightarrow> ?goal i")
 proof-
   fix i
-  assume "i \<ge> ?bound"
-  moreover have "i + width x - size x = i - ?bound" by simp
-  moreover have "x !! (i + width x - size x) \<Longrightarrow> i < size x" by (rule ccontr, auto)
-  ultimately show "?goal i"
-    unfolding rpad_def
-    by (subst nth_shiftl', metis)
+  assume ?xbound ?nbound and "i \<ge> ?ibound"
+  moreover from \<open>?nbound\<close> have "i + n - size x = i - ?ibound" by simp
+  moreover from \<open>?xbound\<close> have "x !! (i + n - size x) \<Longrightarrow> i < size x" by - (rule ccontr, simp)
+  ultimately show "?goal i" unfolding rpad_def by (subst nth_shiftl', metis)
 qed
 
-lemma rpad_inj: "width x = width y \<Longrightarrow> rpad x = rpad y \<Longrightarrow> x = y"
+lemma rpad_inj: "\<lbrakk>width x \<le> n; width y \<le> n; n \<le> size x\<rbrakk> \<Longrightarrow> rpad n x = rpad n y \<Longrightarrow> x = y"
+  (is "\<lbrakk>?xbound; ?ybound; ?nbound; _\<rbrakk> \<Longrightarrow> _")
   unfolding inj_def word_eq_iff
 proof (intro allI impI)
-  fix x y :: "'a word" and i
-  assume "width x = width y"
-  assume "\<forall>j < LENGTH('a). rpad x !! j = rpad y !! j"
-  hence "\<And> j. rpad x !! j = rpad y !! j" using test_bit_bin by blast
-  from this[of "i + size x - width x"] show "x !! i = y !! i"
-    using width_le_size[of x] by (simp add:\<open>width x = width y\<close>)
+  fix i
+  let ?i' = "i + size x - n"
+  assume ?xbound ?ybound ?nbound
+  assume "\<forall>j < LENGTH('a). rpad n x !! j = rpad n y !! j"
+  hence "\<And> j. rpad n x !! j = rpad n y !! j" using test_bit_bin by blast
+  from this[of ?i'] and \<open>?xbound\<close> \<open>?ybound\<close> \<open>?nbound\<close> show "x !! i = y !! i" by simp
 qed
 
-definition pad_join :: "'a::len word \<Rightarrow> 'c::len itself \<Rightarrow> 'b::len word \<Rightarrow> 'c word"
-  ("_ \<diamond>\<^bsub>_\<^esub> _" [58, 1000, 59] 58) where
-  "x \<diamond>\<^bsub>l\<^esub> y \<equiv> rpad (ucast x) OR ucast y"
-
-notation (input) pad_join ("_ \<diamond>\<^sub>_ _" [58, 1000, 59] 58)
+subsection \<open>Spanning concatenation\<close>
 
 abbreviation ucastl ("'(ucast')\<^bsub>_\<^esub> _" [1000, 100] 100) where
   "(ucast)\<^bsub>l\<^esub> a \<equiv> ucast a :: 'b word" for l :: "'b::len0 itself"
 
 notation (input) ucastl ("'(ucast')\<^sub>_ _" [1000, 100] 100)
 
+definition pad_join :: "'a::len word \<Rightarrow> nat \<Rightarrow> 'c::len itself \<Rightarrow> 'b::len word \<Rightarrow> 'c word"
+  ("_ \<^bsub>_\<^esub>\<diamond>\<^bsub>_\<^esub> _" [60, 1000, 1000, 61] 60) where
+  "x \<^bsub>n\<^esub>\<diamond>\<^bsub>l\<^esub> y \<equiv> rpad n (ucast x) OR ucast y"
+
+notation (input) pad_join ("_ \<^sub>_\<diamond>\<^sub>_ _" [60, 1000, 1000, 61] 60)
+
 lemma pad_join_high:
-  "\<lbrakk>width a \<le> size l; width b \<le> size l - width a; size l - width a \<le> i\<rbrakk>
-   \<Longrightarrow> (a \<diamond>\<^sub>l b) !! i = a !! (i + width a - size l)"
+  "\<lbrakk>width a \<le> n; n \<le> size l; width b \<le> size l - n; size l - n \<le> i\<rbrakk>
+   \<Longrightarrow> (a \<^sub>n\<diamond>\<^sub>l b) !! i = a !! (i + n - size l)"
   unfolding pad_join_def
   using nth_ucast nth_width_high by fastforce
- 
+
 lemma pad_join_high'[simp]:
-  "\<lbrakk>width a \<le> size l; width b \<le> size l - width a\<rbrakk> \<Longrightarrow> a !! i = (a \<diamond>\<^sub>l b) !! (i + size l - width a)"
-  using pad_join_high[of a l b "i + size l - width a"] by simp
+  "\<lbrakk>width a \<le> n; n \<le> size l; width b \<le> size l - n\<rbrakk> \<Longrightarrow> a !! i = (a \<^sub>n\<diamond>\<^sub>l b) !! (i + size l - n)"
+  using pad_join_high[of a n l b "i + size l - n"] by simp
 
 lemma pad_join_mid[simp]:
-  "\<lbrakk>width a \<le> size l; width b \<le> size l - width a; width b \<le> i; i < size l - width a\<rbrakk>
-   \<Longrightarrow> \<not> (a \<diamond>\<^sub>l b) !! i"
+  "\<lbrakk>width a \<le> n; n \<le> size l; width b \<le> size l - n; width b \<le> i; i < size l - n\<rbrakk>
+   \<Longrightarrow> \<not> (a \<^sub>n\<diamond>\<^sub>l b) !! i"
   unfolding pad_join_def by auto
 
 lemma pad_join_low[simp]:
-  "\<lbrakk>width a \<le> size l; width b \<le> size l - width a; i < width b\<rbrakk> \<Longrightarrow> (a \<diamond>\<^sub>l b) !! i = b !! i"
+  "\<lbrakk>width a \<le> n; n \<le> size l; width b \<le> size l - n; i < width b\<rbrakk> \<Longrightarrow> (a \<^sub>n\<diamond>\<^sub>l b) !! i = b !! i"
   unfolding pad_join_def by (auto simp add: nth_ucast)
 
 lemma pad_join_inj:
-  assumes eq:"a \<diamond>\<^sub>l b = c \<diamond>\<^sub>l d"
-  assumes width_al: "width a \<le> size l"
-  assumes width_ba:"width b \<le> size l - width a"
-  assumes width_dc:"width d \<le> size l - width c"
-  assumes eq_width:"width a = width c"
+  assumes eq:"a \<^sub>n\<diamond>\<^sub>l b = c \<^sub>n\<diamond>\<^sub>l d"
+  assumes a:"width a \<le> n" and c:"width c \<le> n"
+  assumes n: "n \<le> size l"
+  assumes b:"width b \<le> size l - n"
+  assumes d:"width d \<le> size l - n"
   shows   "a = c" and "b = d"
 proof-
-  from eq have eq':"\<And>j. (a \<diamond>\<^sub>l b) !! j = (c \<diamond>\<^sub>l d) !! j"
-    using test_bit_bin unfolding word_eq_iff by blast
-  moreover from width_al and width_ba
-  have "\<And> i. a !! i = (a \<diamond>\<^sub>l b) !! (i + size l - width a)" by simp
-  moreover from width_al eq_width width_dc
-  have "\<And> i. c !! i = (c \<diamond>\<^sub>l d) !! (i + size l - width c)" by simp
-  ultimately show "a = c" using eq_width unfolding word_eq_iff by metis
+  from eq have eq':"\<And>j. (a \<^sub>n\<diamond>\<^sub>l b) !! j = (c \<^sub>n\<diamond>\<^sub>l d) !! j"
+    using test_bit_bin unfolding word_eq_iff by auto
+  moreover from a n b
+  have "\<And> i. a !! i = (a \<^sub>n\<diamond>\<^sub>l b) !! (i + size l - n)" by simp
+  moreover from c n d
+  have "\<And> i. c !! i = (c \<^sub>n\<diamond>\<^sub>l d) !! (i + size l - n)" by simp
+  ultimately show "a = c" unfolding word_eq_iff by auto
 
   {
-    fix n
-    from width_ba have "n < width b \<Longrightarrow> b !! n = (a \<diamond>\<^sub>l b) !! n" by simp
-    moreover from width_dc have "n < width d \<Longrightarrow> d !! n = (c \<diamond>\<^sub>l d) !! n" by simp
-    moreover have "n \<ge> width b \<Longrightarrow> \<not> b !! n" and "n \<ge> width d \<Longrightarrow> \<not> d !! n" by auto
-    ultimately have "b !! n = d !! n"
-      using eq'[of n] width_ba width_dc eq_width
-        pad_join_mid[of a l b n, OF width_al width_ba]
-        pad_join_mid[of c l d n, OF width_al[simplified eq_width] width_dc]
-      by (metis leI less_le_trans)
+    fix i
+    from a n b have "i < width b \<Longrightarrow> b !! i = (a \<^sub>n\<diamond>\<^sub>l b) !! i" by simp
+    moreover from c n d have "i < width d \<Longrightarrow> d !! i = (c \<^sub>n\<diamond>\<^sub>l d) !! i" by simp
+    moreover have "i \<ge> width b \<Longrightarrow> \<not> b !! i" and "i \<ge> width d \<Longrightarrow> \<not> d !! i" by auto
+    ultimately have "b !! i = d !! i"
+      using eq'[of i] b d
+        pad_join_mid[of a n l b i, OF a n b]
+        pad_join_mid[of c n l d i, OF c n d]
+      by (meson leI less_le_trans)
   }
   thus "b = d" unfolding word_eq_iff by simp
 qed
 
 lemma pad_join_inj'[dest!]:
- "\<lbrakk>a \<diamond>\<^sub>l b = c \<diamond>\<^sub>l d;
-   width a \<le> size l;
-   width b \<le> size l - width a;
-   width d \<le> size l - width c;
-   width a = width c\<rbrakk> \<Longrightarrow> a = c \<and> b = d"
+ "\<lbrakk>a \<^sub>n\<diamond>\<^sub>l b = c \<^sub>n\<diamond>\<^sub>l d;
+   width a \<le> n; width c \<le> n; n \<le> size l;
+   width b \<le> size l - n;
+   width d \<le> size l - n\<rbrakk> \<Longrightarrow> a = c \<and> b = d"
   apply (rule conjI)
   subgoal by (frule (4) pad_join_inj(1))
   by (frule (4) pad_join_inj(2))
 
+definition restrict :: "'a::len word \<Rightarrow> nat set \<Rightarrow> 'a word" (infixl "\<restriction>" 60) where
+  "restrict x s \<equiv> BITS i. i \<in> s \<and> x !! i"
+
+subsection \<open>Deal with partially undefined results\<close>
+
+lemma nth_restrict[iff]: "(x \<restriction> s) !! n = (n \<in> s \<and> x !! n)"
+  unfolding restrict_def
+  by (simp add: bang_conj_lt test_bit.eq_norm)
+
+lemma restrict_inj2[dest!]:
+  assumes eq:"f x\<^sub>1 y\<^sub>1 OR v\<^sub>1 \<restriction> s = f x\<^sub>2 y\<^sub>2 OR v\<^sub>2 \<restriction> s"
+  assumes fi:"\<And> x y i. i \<in> s \<Longrightarrow> \<not> f x y !! i"
+  assumes inj:"\<And> x\<^sub>1 y\<^sub>1 x\<^sub>2 y\<^sub>2. f x\<^sub>1 y\<^sub>1 = f x\<^sub>2 y\<^sub>2 \<Longrightarrow> x\<^sub>1 = x\<^sub>2 \<and> y\<^sub>1 = y\<^sub>2"
+  shows   "x\<^sub>1 = x\<^sub>2 \<and> y\<^sub>1 = y\<^sub>2"
+proof-
+  from eq and fi have "f x\<^sub>1 y\<^sub>1 = f x\<^sub>2 y\<^sub>2" unfolding word_eq_iff by auto
+  with inj show ?thesis .
+qed
+
+subsection \<open>Plain concatenation\<close>
+
 definition join :: "'a::len word \<Rightarrow> 'c::len itself \<Rightarrow> nat \<Rightarrow> 'b::len word \<Rightarrow> 'c word"
-  ("_ \<^bsub>_\<^esub>\<Join>\<^bsub>_\<^esub> _" [60,1000,1000,59] 59) where
+  ("_ \<^bsub>_\<^esub>\<Join>\<^bsub>_\<^esub> _" [62,1000,1000,61] 61) where
   "(a \<^bsub>l\<^esub>\<Join>\<^bsub>n\<^esub> b) \<equiv> (ucast a << n) OR (ucast b)"
 
-notation (input) join ("_ \<^sub>_\<Join>\<^sub>_ _" [60,1000,1000,59] 59)
+notation (input) join ("_ \<^sub>_\<Join>\<^sub>_ _" [62,1000,1000,61] 61)
 
 lemma width_join:
   "\<lbrakk>width a + n \<le> size l; width b \<le> n\<rbrakk> \<Longrightarrow> width (a \<^sub>l\<Join>\<^sub>n b) \<le> width a + n"
@@ -369,25 +427,24 @@ lemma join_inj'[dest!]:
   subgoal by (frule (4) join_inj(1))
   by (frule (4) join_inj(2))
 
-text \<open>We start with some types and definitions that will be used later.\<close>
+section \<open>Data formats\<close>
 
 subsection \<open>Procedure keys\<close>
 
 text \<open>
   Procedure keys are represented as 24-byte (192 bits) machine words.
-  Keys will be used both in the abstract and concrete states.
 \<close>
 
-type_synonym word24 = "192 word"
+type_synonym word24 = "192 word" \<comment> \<open>24 bytes\<close>
 type_synonym key = word24
+
+subsection \<open>Storage state\<close>
 
 text \<open>Byte is 8-bit machine word:\<close>
 type_synonym byte = "8 word"
 
-section \<open>Storage state\<close>
-
 text \<open>32-byte machine words that are used to model keys and values of the storage.\<close>
-type_synonym word32 = "256 word" (* 32 bytes *)
+type_synonym word32 = "256 word" \<comment> \<open>32 bytes\<close>
 
 text \<open>
   Storage is a function that takes a 32-byte word (key) and returns another
@@ -395,27 +452,89 @@ text \<open>
 \<close>
 type_synonym storage = "word32 \<Rightarrow> word32"
 
+subsection \<open>Common notation\<close>
+
+text \<open>
+  Specialize previously defined general concatenation operations for the fixed result size of
+  32 bytes. Thus we avoid lots of redundant type annotations for every intermediate result
+  (note that these intermediate types cannot be inferred automatically
+  (in a purely Hindley-Milner setting as in Isabelle),
+  because this would require type-level functions/dependent types).
+\<close>
+
 abbreviation "len (_ :: 'a::len word itself) \<equiv> TYPE('a)"
 
-no_notation join  ("_ \<^bsub>_\<^esub>\<Join>\<^bsub>_\<^esub> _" [60,1000,1000,59] 59)
-no_notation (input) join ("_ \<^sub>_\<Join>\<^sub>_ _" [60,1000,1000,59] 59)
+no_notation join  ("_ \<^bsub>_\<^esub>\<Join>\<^bsub>_\<^esub> _" [62,1000,1000,61] 61)
+no_notation (input) join ("_ \<^sub>_\<Join>\<^sub>_ _" [62,1000,1000,61] 61)
 
-abbreviation join32 ("_ \<Join>\<^bsub>_\<^esub> _" [60,1000,59] 59) where
+abbreviation join32 ("_ \<Join>\<^bsub>_\<^esub> _" [62,1000,61] 61) where
   "a \<Join>\<^bsub>n\<^esub> b \<equiv> join a (len TYPE(word32)) (n * 8) b"
-abbreviation (output) join32_out ("_ \<Join>\<^bsub>_\<^esub> _" [60,1000,59] 59) where
+abbreviation (output) join32_out ("_ \<Join>\<^bsub>_\<^esub> _" [62,1000,61] 61) where
   "join32_out a n b \<equiv> join a (TYPE(256)) n b"
-notation (input) join32 ("_ \<Join>\<^sub>_ _" [60,1000,59] 59)
+notation (input) join32 ("_ \<Join>\<^sub>_ _" [62,1000,61] 61)
 
-no_notation pad_join  ("_ \<diamond>\<^bsub>_\<^esub> _" [58,1000,59] 58)
-no_notation (input) pad_join ("_ \<diamond>\<^sub>_ _" [58,1000,59] 58)
+no_notation pad_join  ("_ \<^bsub>_\<^esub>\<diamond>\<^bsub>_\<^esub> _" [60,1000,1000,61] 60)
+no_notation (input) pad_join ("_ \<^sub>_\<diamond>\<^sub>_ _" [60,1000,1000,61] 60)
 
-abbreviation pad_join32 ("_ \<diamond> _" [58,59] 58) where "a \<diamond> b \<equiv> pad_join a (len TYPE(word32)) b"
-abbreviation (output) pad_join32_out ("_ \<diamond> _" [58,59] 58) where
-  "pad_join32_out a b \<equiv> pad_join a (TYPE(256)) b"
+abbreviation pad_join32 ("_ \<^bsub>_\<^esub>\<diamond> _" [60,1000,61] 60) where
+  "a \<^bsub>n\<^esub>\<diamond> b \<equiv> pad_join a (n * 8) (len TYPE(word32)) b"
+abbreviation (output) pad_join32_out ("_ \<^bsub>_\<^esub>\<diamond> _" [60,1000,61] 60) where
+  "pad_join32_out a n b \<equiv> pad_join a n (TYPE(256)) b"
+notation (input) pad_join32 ("_ \<^sub>_\<diamond> _" [60,1000,61] 60)
+
+text \<open>
+  Override treatment of hexidecimal numeric constants to make them monomorphic words of
+  fixed length, mimicking the notation used in the informal specification (e.g. @{term "0x01"})
+  is always a word 1 byte long and is not, say, the natural number one). Otherwise, again, lots
+  of redundant type annotations would arise.
+\<close>
+
+parse_ast_translation \<open>
+  let
+    open Ast
+    fun mk_numeral t = mk_appl (Constant @{syntax_const "_Numeral"}) t
+    fun mk_word_numeral num t =
+      if String.isPrefix "0x" num then
+        mk_appl (Constant @{syntax_const "_constrain"})
+          [mk_numeral t,
+           mk_appl (Constant @{type_syntax "word"})
+             [mk_appl (Constant @{syntax_const "_NumeralType"})
+             [Variable (4 * (size num - 2) |> string_of_int)]]]
+      else
+        mk_numeral t
+    fun numeral_ast_tr ctxt (t as [Appl [Constant @{syntax_const "_constrain"},
+                                         Constant num,
+                                         _]]) =
+          mk_word_numeral num t
+      | numeral_ast_tr ctxt (t as [Constant num]) = mk_word_numeral num t
+      | numeral_ast_tr _ t                        = mk_numeral t
+      | numeral_ast_tr _ t                        = raise AST (@{syntax_const "_Numeral"}, t)
+  in
+     [(@{syntax_const "_Numeral"}, numeral_ast_tr)]
+  end
+\<close>
+
+text \<open>
+  Introduce generic notation for representation/encoding of various "logical"/abstract
+  entities into machine words. We use adhoc overloading to use the same notation for various
+  types of entities (indices, offsets, addresses, capabilities etc.).
+\<close>
 
 no_notation floor ("\<lfloor>_\<rfloor>")
 
-consts rep :: "'a \<Rightarrow> 'b word" ("\<lfloor>_\<rfloor>")
+consts rep :: "'a \<Rightarrow> 'b" ("\<lfloor>_\<rfloor>")
+
+subsection \<open>Addresses\<close>
+
+text \<open>
+  We don't include @{text Null} capability into the type. It is only handled specially inside the
+  call delegation, otherwise it only complicates the proofs with side conditions @{text "\<noteq> Null"}.
+  So there will be separate type @{text call} defined as @{text "capability option"} to respect
+  the fact that it can be @{text Null}.
+
+  In general, in the following we strive to make all encoding functions injective without any
+  preconditions. All the necessary invariants are built into the type definitions.
+\<close>
 
 datatype capability =
     Call
@@ -427,65 +546,49 @@ datatype capability =
   | Gas
 
 definition cap_type_rep :: "capability \<Rightarrow> byte" where
-  "cap_type_rep c \<equiv> case c of 
-      Call  \<Rightarrow> 0x3 
-    | Reg   \<Rightarrow> 0x4
-    | Del   \<Rightarrow> 0x5
-    | Entry \<Rightarrow> 0x6
-    | Write \<Rightarrow> 0x7
-    | Log   \<Rightarrow> 0x8
-    | Gas   \<Rightarrow> 0x9"
+  "cap_type_rep c \<equiv> case c of
+      Call  \<Rightarrow> 0x03
+    | Reg   \<Rightarrow> 0x04
+    | Del   \<Rightarrow> 0x05
+    | Entry \<Rightarrow> 0x06
+    | Write \<Rightarrow> 0x07
+    | Log   \<Rightarrow> 0x08
+    | Gas   \<Rightarrow> 0x09"
 
-overloading
-  rep_cap_type \<equiv> "rep :: capability \<Rightarrow> byte"
-begin
-  fun rep_cap_type :: "capability \<Rightarrow> byte" where "rep_cap_type r = cap_type_rep r"
-end
+adhoc_overloading rep cap_type_rep
 
-lemmas cap_type = rep_cap_type.simps cap_type_rep_def
+lemma cap_type_rng[simp]: "\<lfloor>c\<rfloor> \<in> {0x03..0x09}" for c :: capability
+  unfolding cap_type_rep_def by (simp split:capability.split)
 
-abbreviation (input) byte ("_\<^bsub>1\<^esub>" [1000] 1000) where "n\<^bsub>1\<^esub> \<equiv> n :: byte"
-
-lemma cap_type_rng[simp]: "\<lfloor>c ::capability\<rfloor>\<^bsub>1\<^esub> \<in> {0x3..0x9}"
-  unfolding cap_type by (simp split:capability.split)
-
-lemma cap_type_inj[simp]: "\<lfloor>c\<^sub>1 :: capability\<rfloor>\<^bsub>1\<^esub> = \<lfloor>c\<^sub>2\<rfloor> \<Longrightarrow> c\<^sub>1 = c\<^sub>2"
-  unfolding cap_type
+lemma cap_type_inj[simp]: "\<lfloor>c\<^sub>1\<rfloor> = \<lfloor>c\<^sub>2\<rfloor> \<Longrightarrow> c\<^sub>1 = c\<^sub>2" for c\<^sub>1 c\<^sub>2 :: capability
+  unfolding cap_type_rep_def
   by (simp split:capability.splits)
 
-lemma width_cap_type: "width (\<lfloor>x :: capability\<rfloor>\<^bsub>1\<^esub>+ 1) \<le> 4"
+lemma width_cap_type: "width (\<lfloor>c\<rfloor>+ 1) \<le> 4" for c :: capability
 proof (rule ccontr, drule not_le_imp_less)
-  assume "4 < width (\<lfloor>x\<rfloor>\<^bsub>1\<^esub> + 1)"
-  moreover hence "(\<lfloor>x\<rfloor>\<^bsub>1\<^esub> + 1) !! (width (\<lfloor>x\<rfloor>\<^bsub>1\<^esub> + 1) - 1)" using nth_width_msb by force
-  ultimately obtain n where "(\<lfloor>x\<rfloor>\<^bsub>1\<^esub> + 1) !! n" and "n \<ge> 4" by (metis le_step_down_nat nat_less_le)
-  thus False unfolding cap_type by (simp split:capability.splits)
+  assume "4 < width (\<lfloor>c\<rfloor> + 1)"
+  moreover hence "(\<lfloor>c\<rfloor> + 1) !! (width (\<lfloor>c\<rfloor> + 1) - 1)" using nth_width_msb by force
+  ultimately obtain n where "(\<lfloor>c\<rfloor> + 1) !! n" and "n \<ge> 4" by (metis le_step_down_nat nat_less_le)
+  thus False unfolding cap_type_rep_def by (simp split:capability.splits)
 qed
 
-lemma width_cap_type'[simp]: "4 \<le> n \<Longrightarrow> width (\<lfloor>x :: capability\<rfloor>\<^bsub>1\<^esub> + 1) \<le> n"
-  using width_cap_type[of x] by simp
+lemma width_cap_type'[simp]: "4 \<le> n \<Longrightarrow> width (\<lfloor>c\<rfloor> + 1) \<le> n" for c :: capability
+  using width_cap_type[of c] by simp
 
-lemma cap_type_nonzero[simplified rep_cap_type.simps, simp]: "\<lfloor>x :: capability\<rfloor>\<^bsub>1\<^esub> \<noteq> 0"
-  unfolding cap_type by (simp split:capability.splits)
+lemma cap_type_nonzero[simp]: "\<lfloor>c\<rfloor> \<noteq> 0" for c :: capability
+  unfolding cap_type_rep_def by (simp split:capability.splits)
 
-typedef capability_index = "{x :: byte. x < 0xff}" morphisms cap_index_rep cap_index_abs
+typedef capability_index = "{i :: byte. i < 0xff}" morphisms cap_index_rep cap_index
   by (intro exI[of _ "0"], simp)
 
-overloading
-  rep_cap_index \<equiv> "rep :: capability_index \<Rightarrow> byte"
-begin
-  fun rep_cap_index :: "capability_index \<Rightarrow> byte" where "rep_cap_index r = cap_index_rep r"
-end
+adhoc_overloading rep cap_index_rep
 
-lemmas cap_index = rep_cap_index.simps cap_index_rep
+lemma width_cap_index: "width (\<lfloor>i\<rfloor>+ 1) \<le> 8" for i :: capability_index by simp
 
-lemma width_cap_index: "width (\<lfloor>x :: capability_index\<rfloor>\<^bsub>1\<^esub>+ 1) \<le> 8"  by simp
+lemma width_cap_index'[simp]: "8 \<le> n \<Longrightarrow> width (\<lfloor>i\<rfloor> + 1) \<le> n" for i :: capability_index by simp
 
-lemma width_cap_index'[simp]: "8 \<le> n \<Longrightarrow> width (\<lfloor>x :: capability_index\<rfloor>\<^bsub>1\<^esub> + 1) \<le> n" by simp
-
-lemma cap_index_nonzero[simplified rep_cap_index.simps, simp]: "\<lfloor>x :: capability_index\<rfloor>\<^bsub>1\<^esub> + 1 \<noteq> 0"
-  apply (insert cap_index[of x]) 
-  unfolding cap_index
-  using less_is_non_zero_p1 by auto
+lemma cap_index_nonzero[simp]: "\<lfloor>i\<rfloor> + 1 \<noteq> 0" for i :: capability_index
+  using less_is_non_zero_p1 cap_index_rep[of i] by auto
 
 type_synonym capability_offset = byte
 
@@ -497,64 +600,204 @@ datatype data_offset =
 
 definition data_offset_rep :: "data_offset \<Rightarrow> word32" where
  "data_offset_rep off \<equiv> case off of
-     Addr         \<Rightarrow> 0x00\<^bsub>1\<^esub> \<Join>\<^sub>2 0x00\<^bsub>1\<^esub>   \<Join>\<^sub>1 0x00\<^bsub>1\<^esub>
-   | Index        \<Rightarrow> 0x00\<^bsub>1\<^esub> \<Join>\<^sub>2 0x00\<^bsub>1\<^esub>   \<Join>\<^sub>1 0x01\<^bsub>1\<^esub>
-   | Ncaps ty     \<Rightarrow> \<lfloor>ty\<rfloor>\<^bsub>1\<^esub> \<Join>\<^sub>2 0x00\<^bsub>1\<^esub>   \<Join>\<^sub>1 0x00\<^bsub>1\<^esub>
-   | Cap ty i off \<Rightarrow> \<lfloor>ty\<rfloor>\<^bsub>1\<^esub> \<Join>\<^sub>2 \<lfloor>i\<rfloor>\<^bsub>1\<^esub> + 1 \<Join>\<^sub>1 off"
+     Addr         \<Rightarrow> 0x00  \<Join>\<^sub>2 0x00    \<Join>\<^sub>1  0x00
+   | Index        \<Rightarrow> 0x00  \<Join>\<^sub>2 0x00    \<Join>\<^sub>1  0x01
+   | Ncaps ty     \<Rightarrow> \<lfloor>ty\<rfloor>  \<Join>\<^sub>2 0x00     \<Join>\<^sub>1  0x00
+   | Cap ty i off \<Rightarrow> \<lfloor>ty\<rfloor>  \<Join>\<^sub>2 \<lfloor>i\<rfloor> + 1  \<Join>\<^sub>1  off"
 
-overloading
-  rep_data_offset \<equiv> "rep :: data_offset \<Rightarrow> word32"
-begin
-  fun rep_data_offset :: "data_offset \<Rightarrow> word32" where "rep_data_offset off = data_offset_rep off"
-end
+adhoc_overloading rep data_offset_rep
 
-lemmas data_offset = rep_data_offset.simps data_offset_rep_def
-
-abbreviation (input) word32 ("_\<^bsub>32\<^esub>" [1000] 1000) where "n\<^bsub>32\<^esub> \<equiv> n :: word32"
-
-lemma data_offset_inj[simplified rep_data_offset.simps,simp]:
-  "\<lfloor>d\<^sub>1 :: data_offset\<rfloor>\<^bsub>32\<^esub> = \<lfloor>d\<^sub>2 :: data_offset\<rfloor>\<^bsub>32\<^esub> \<Longrightarrow> d\<^sub>1 = d\<^sub>2"
-  unfolding data_offset
+lemma data_offset_inj[simp]:
+  "\<lfloor>d\<^sub>1\<rfloor> = \<lfloor>d\<^sub>2\<rfloor> \<Longrightarrow> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: data_offset
+  unfolding data_offset_rep_def
   by (auto split:data_offset.splits simp add:cap_index_rep_inject)
+
+lemma width_data_offset: "width \<lfloor>d\<rfloor> \<le> 3 * 8" for d :: data_offset
+  unfolding data_offset_rep_def
+  by (simp split:data_offset.splits)
+
+lemma width_data_offset'[simp]: "3 * 8 \<le> n \<Longrightarrow> width \<lfloor>d\<rfloor> \<le> n" for d :: data_offset
+  using width_data_offset[of d] by simp
+
+typedef key_index = "{i :: nat. i < 2 ^ LENGTH(key) - 1}" morphisms key_index_rep' key_index
+  by (rule exI[of _ "0"], simp)
+
+adhoc_overloading rep key_index_rep'
 
 datatype address =
    Heap_proc key data_offset
   | Nprocs
-  | Proc_key nat
+  | Proc_key key_index
   | Kernel
   | Curr_proc
   | Entry_proc
 
-abbreviation "pref \<equiv> 0xffffffff :: word32"
+definition "key_index_rep i \<equiv> of_nat (\<lfloor>i\<rfloor> + 1) :: key" for i :: key_index
 
-abbreviation "index i \<equiv> of_nat i :: key"
+adhoc_overloading rep key_index_rep
+
+lemma key_index_nonzero[simp]: "\<lfloor>i\<rfloor> \<noteq> (0 :: key)" for i :: key_index
+  unfolding key_index_rep_def using key_index_rep'[of i]
+  by (intro of_nat_neq_0, simp_all)
+
+lemma key_index_inj[simp]: "(\<lfloor>i\<^sub>1\<rfloor> :: key) = \<lfloor>i\<^sub>2\<rfloor> \<Longrightarrow> i\<^sub>1 = i\<^sub>2" for i :: key_index
+  unfolding key_index_rep_def using key_index_rep'[of i\<^sub>1] key_index_rep'[of i\<^sub>2]
+  by (simp add:key_index_rep'_inject of_nat_inj)
 
 definition addr_rep :: "address \<Rightarrow> word32" where
   "addr_rep a \<equiv> case a of
-    Heap_proc k ofs \<Rightarrow> pref \<Join>\<^sub>1 0x00\<^bsub>1\<^esub> \<diamond>      k  \<Join>\<^sub>3 \<lfloor>ofs\<rfloor>\<^bsub>32\<^esub>
-  | Nprocs          \<Rightarrow> pref \<Join>\<^sub>1 0x01\<^bsub>1\<^esub> \<diamond> 0x00\<^bsub>1\<^esub> \<Join>\<^sub>3 0x00\<^bsub>1\<^esub> \<Join>\<^sub>2 0x00\<^bsub>1\<^esub> \<Join>\<^sub>1 0x00\<^bsub>1\<^esub>
-  | Proc_key i      \<Rightarrow> pref \<Join>\<^sub>1 0x01\<^bsub>1\<^esub> \<diamond> index i \<Join>\<^sub>3 0x00\<^bsub>1\<^esub> \<Join>\<^sub>2 0x00\<^bsub>1\<^esub> \<Join>\<^sub>1 0x00\<^bsub>1\<^esub>
-  | Kernel          \<Rightarrow> pref \<Join>\<^sub>1 0x02\<^bsub>1\<^esub> \<diamond> 0x00\<^bsub>1\<^esub> \<Join>\<^sub>3 0x00\<^bsub>1\<^esub> \<Join>\<^sub>2 0x00\<^bsub>1\<^esub> \<Join>\<^sub>1 0x00\<^bsub>1\<^esub>
-  | Curr_proc       \<Rightarrow> pref \<Join>\<^sub>1 0x03\<^bsub>1\<^esub> \<diamond> 0x00\<^bsub>1\<^esub> \<Join>\<^sub>3 0x00\<^bsub>1\<^esub> \<Join>\<^sub>2 0x00\<^bsub>1\<^esub> \<Join>\<^sub>1 0x00\<^bsub>1\<^esub>
-  | Entry_proc      \<Rightarrow> pref \<Join>\<^sub>1 0x04\<^bsub>1\<^esub> \<diamond> 0x00\<^bsub>1\<^esub> \<Join>\<^sub>3 0x00\<^bsub>1\<^esub> \<Join>\<^sub>2 0x00\<^bsub>1\<^esub> \<Join>\<^sub>1 0x00\<^bsub>1\<^esub>"
+    Heap_proc k offs \<Rightarrow> 0xffffffff \<Join>\<^sub>1 0x00 \<^sub>5\<diamond> k          \<Join>\<^sub>3 \<lfloor>offs\<rfloor>
+  | Nprocs           \<Rightarrow> 0xffffffff \<Join>\<^sub>1 0x01 \<^sub>5\<diamond> (0 :: key) \<Join>\<^sub>3 0x000000
+  | Proc_key i       \<Rightarrow> 0xffffffff \<Join>\<^sub>1 0x01 \<^sub>5\<diamond> \<lfloor>i\<rfloor>        \<Join>\<^sub>3 0x000000
+  | Kernel           \<Rightarrow> 0xffffffff \<Join>\<^sub>1 0x02 \<^sub>5\<diamond> (0 :: key) \<Join>\<^sub>3 0x000000
+  | Curr_proc        \<Rightarrow> 0xffffffff \<Join>\<^sub>1 0x03 \<^sub>5\<diamond> (0 :: key) \<Join>\<^sub>3 0x000000
+  | Entry_proc       \<Rightarrow> 0xffffffff \<Join>\<^sub>1 0x04 \<^sub>5\<diamond> (0 :: key) \<Join>\<^sub>3 0x000000"
 
-overloading
-  rep_addr \<equiv> "rep :: address \<Rightarrow> word32"
-begin
-  fun rep_addr :: "address \<Rightarrow> word32" where "rep_addr off = addr_rep off"
+adhoc_overloading rep addr_rep
+
+lemma address_inj[simp]: "\<lfloor>a\<^sub>1\<rfloor> = \<lfloor>a\<^sub>2\<rfloor> \<Longrightarrow> a\<^sub>1 = a\<^sub>2" for a\<^sub>1 a\<^sub>2 :: address
+  unfolding addr_rep_def
+  by (split address.splits) (force split:address.splits)+
+
+definition addr ("\<lceil>_\<rceil>\<^bsup>addr\<^esup>") where
+  "addr w \<equiv> if w \<in> range addr_rep then Some (the_inv addr_rep w) else None"
+
+lemma addr_inv[simp]: "\<lceil>\<lfloor>a\<rfloor>\<rceil>\<^bsup>addr\<^esup> = Some a"
+  unfolding addr_def
+  by (auto simp add:inj_def the_inv_f_f)
+
+lemma addr_inv'[simp]: "\<lceil>w\<rceil>\<^bsup>addr\<^esup> = Some a \<Longrightarrow> \<lfloor>a\<rfloor> = w"
+  unfolding addr_def
+  by (auto intro:f_the_inv_into_f simp add:inj_def split:if_splits)
+
+subsection \<open>Capability formats\<close>
+
+no_notation ceiling ("\<lceil>_\<rceil>")
+
+locale cap_sub =
+  fixes set_of :: "'a \<Rightarrow> 'b set" ("\<lceil>_\<rceil>")
+  fixes sub :: "'a \<Rightarrow> 'a \<Rightarrow> bool" ("(_/ \<subseteq>\<^sub>c _)" [51, 51] 50)
+  assumes wd:"a \<subseteq>\<^sub>c b = (\<lceil>a\<rceil> \<subseteq> \<lceil>b\<rceil>)" begin
+
+lemma sub_refl: "a \<subseteq>\<^sub>c a" using wd by auto
+
+lemma sub_trans: "\<lbrakk>a \<subseteq>\<^sub>c b; b \<subseteq>\<^sub>c c\<rbrakk> \<Longrightarrow> a \<subseteq>\<^sub>c c" using wd by blast
 end
 
-lemmas address = rep_addr.simps addr_rep_def
+consts set_of :: "'a \<Rightarrow> 'b set" ("\<lceil>_\<rceil>")
 
-lemma address_inj[simplified rep_addr.simps, simp]:
-  "\<lfloor>a\<^sub>1 :: address\<rfloor>\<^bsub>32\<^esub> = \<lfloor>a\<^sub>2 :: address\<rfloor>\<^bsub>32\<^esub> \<Longrightarrow> a\<^sub>1 = a\<^sub>2"
-  unfolding address
-  apply (split address.splits)
-       apply (split address.splits)
-            apply (auto)[1]
-  sorry
+consts sub :: "'a \<Rightarrow> 'a \<Rightarrow> bool" ("(_/ \<subseteq>\<^sub>c _)" [51, 51] 50)
 
-section \<open>Abstract state\<close>
+subsubsection \<open>Prefixed capability (Call, Register, Delete)\<close>
+
+typedef prefix_size = "{n :: nat. n \<le> LENGTH(key)}"
+  morphisms prefix_size_rep' prefix_size
+  by auto
+
+adhoc_overloading rep prefix_size_rep'
+
+definition "prefix_size_rep s \<equiv> of_nat \<lfloor>s\<rfloor> :: byte" for s :: prefix_size
+
+adhoc_overloading rep prefix_size_rep
+
+lemma prefix_size_inj[simp]: "(\<lfloor>s\<^sub>1\<rfloor> :: byte) = \<lfloor>s\<^sub>2\<rfloor> \<Longrightarrow> s\<^sub>1 = s\<^sub>2" for s\<^sub>1 s\<^sub>2 :: prefix_size
+  unfolding prefix_size_rep_def using prefix_size_rep'[of s\<^sub>1] prefix_size_rep'[of s\<^sub>2]
+  by (simp add:prefix_size_rep'_inject of_nat_inj)
+
+lemma prefix_size_rep_less[simp]: "LENGTH(key) \<le> n \<Longrightarrow> \<lfloor>s\<rfloor> \<le> (n :: nat)" for s :: prefix_size
+  using prefix_size_rep'[of s] by simp
+
+type_synonym prefixed_capability = "prefix_size \<times> key"
+
+definition
+  "set_of_pref_cap sk \<equiv> let (s, k) = sk in {k' :: key. take \<lfloor>s\<rfloor> (to_bl k') = take \<lfloor>s\<rfloor> (to_bl k)}"
+  for sk :: prefixed_capability
+
+adhoc_overloading set_of set_of_pref_cap
+
+definition "pref_cap_sub A B \<equiv>
+  let (s\<^sub>A, k\<^sub>A) = A in let (s\<^sub>B, k\<^sub>B) = B in
+  (\<lfloor>s\<^sub>A\<rfloor> :: nat) \<ge> \<lfloor>s\<^sub>B\<rfloor> \<and> take \<lfloor>s\<^sub>B\<rfloor> (to_bl k\<^sub>A) = take \<lfloor>s\<^sub>B\<rfloor> (to_bl k\<^sub>B)"
+  for A B :: prefixed_capability
+
+adhoc_overloading sub pref_cap_sub
+
+lemma nth_take_i[dest]: "\<lbrakk>take n a = take n b; i < n\<rbrakk> \<Longrightarrow> a ! i = b ! i"
+  by (metis nth_take)
+
+lemma take_less_diff:
+  fixes l' l'' :: "'a list"
+  assumes ex:"\<And> u :: 'a. \<exists> u'. u' \<noteq> u"
+  assumes "n < m"
+  assumes "length l' = length l''"
+  assumes "n \<le> length l'"
+  assumes "m \<le> length l'"
+  obtains l where
+      "length l = length l'"
+  and "take n l = take n l'"
+  and "take m l \<noteq> take m l''"
+proof-
+  let ?x = "l'' ! n"
+  from ex obtain y where neq:"y \<noteq> ?x" by auto
+  let ?l = "take n l' @ y # drop (n + 1) l'"
+  from assms have 0:"n = length (take n l') + 0" by simp
+  from assms have "take n ?l = take n l'" by simp
+  moreover from assms and neq have "take m ?l \<noteq> take m l''"
+    using 0 nth_take_i nth_append_length
+    by (metis add.right_neutral)
+  moreover have "length ?l = length l'" using assms by auto
+  ultimately show ?thesis using that by blast
+qed
+
+lemma pref_cap_sub_iff[iff]: "a \<subseteq>\<^sub>c b = (\<lceil>a\<rceil> \<subseteq> \<lceil>b\<rceil>)" for a b :: prefixed_capability
+proof
+  show "a \<subseteq>\<^sub>c b \<Longrightarrow> \<lceil>a\<rceil> \<subseteq> \<lceil>b\<rceil>"
+    unfolding pref_cap_sub_def set_of_pref_cap_def
+    by (force intro:nth_take_lemma)
+  {
+    fix n m :: prefix_size
+    fix x y :: key
+    assume "\<lfloor>n\<rfloor> < (\<lfloor>m\<rfloor> :: nat)"
+    then obtain z where
+      "length z = size x"
+      "take \<lfloor>n\<rfloor> z = take \<lfloor>n\<rfloor> (to_bl x)" and "take \<lfloor>m\<rfloor> z \<noteq> take \<lfloor>m\<rfloor> (to_bl y)"
+      using take_less_diff[of "\<lfloor>n\<rfloor>" "\<lfloor>m\<rfloor>" "to_bl x" "to_bl y"]
+      by auto
+    moreover hence "to_bl (of_bl z :: key) = z" by (intro word_bl.Abs_inverse[of z], simp)
+    ultimately
+    have "\<exists> u :: key.
+           take \<lfloor>n\<rfloor> (to_bl u) = take \<lfloor>n\<rfloor> (to_bl x) \<and> take \<lfloor>m\<rfloor> (to_bl u) \<noteq> take \<lfloor>m\<rfloor> (to_bl y)"
+      by metis
+  }
+  thus "\<lceil>a\<rceil> \<subseteq> \<lceil>b\<rceil> \<Longrightarrow> a \<subseteq>\<^sub>c b"
+    unfolding pref_cap_sub_def set_of_pref_cap_def subset_eq
+    apply (auto split:prod.split)
+    by (erule contrapos_pp[of "\<forall> x. _ x"], simp)
+qed
+
+interpretation cap_sub set_of_pref_cap pref_cap_sub unfolding cap_sub_def by auto
+
+definition "pref_cap_rep sk r \<equiv>
+  let (s, k) = sk in \<lfloor>s\<rfloor> \<^sub>1\<diamond> k OR r \<restriction> {LENGTH(key) + 1 ..<LENGTH(word32) - LENGTH(byte)}"
+  for sk :: prefixed_capability
+
+adhoc_overloading rep pref_cap_rep
+
+lemma pref_cap_rep_inj_helper_inj[simp]: "\<lfloor>s\<^sub>1\<rfloor> \<^sub>1\<diamond> k\<^sub>1 = \<lfloor>s\<^sub>2\<rfloor> \<^sub>1\<diamond> k\<^sub>2 \<Longrightarrow> s\<^sub>1 = s\<^sub>2 \<and> k\<^sub>1 = k\<^sub>2"
+  for s\<^sub>1 s\<^sub>2 :: prefix_size and k\<^sub>1 k\<^sub>2 :: key
+  by auto
+
+lemma pref_cap_rep_inj_helper_zero[simplified, simp]:
+  "n \<in> {LENGTH(key) + 1 ..<LENGTH(word32) - LENGTH(byte)} \<Longrightarrow> \<not> (\<lfloor>s\<rfloor> \<^sub>1\<diamond> k) !! n"
+  for s :: prefix_size and k :: key
+  by simp
+
+lemma pref_cap_rep_inj[simp]: "\<lfloor>c\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>c\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> c\<^sub>1 = c\<^sub>2" for c\<^sub>1 c\<^sub>2 :: prefixed_capability
+  unfolding pref_cap_rep_def
+  apply (simp split:prod.splits)
+  by (drule restrict_inj2, simp+)
+
+section \<open>Kernel state\<close>
 
 text \<open>
   Abstract state is implemented as a record with a single component labeled "procs".
@@ -610,7 +853,7 @@ definition abs_wf :: "abs \<Rightarrow> bool" ("\<turnstile> _" [60] 60) where
 lemmas procs_rng_wf = abs_wf_def proc_id_rng_wf_def
 
 lemmas procs_map_wf = abs_wf_def procs_map_wf_def
-
+(*
 text \<open>Storage key that corresponds to the number of procedures in the list:\<close>
 abbreviation nprocs_addr ("@nprocs") where "nprocs_addr \<equiv> 0xffffffff01 0...0 :: word32"
 
@@ -1351,5 +1594,5 @@ proof-
     unfolding add_proc'_def
     using assms
     by (simp add:n_of_procedures_def)
-qed
+qed*)
 end
