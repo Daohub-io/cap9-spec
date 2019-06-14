@@ -42,7 +42,7 @@ declare unat_word_ariths[simp] word_size[simp] is_up_def[simp] wsst_TYs(1,2)[sim
 subsection \<open>Word width\<close>
 
 text \<open>
-  We introduce definition of the least numer of bits to hold the current value of a word. This is
+  We introduce definition of the least number of bits to hold the current value of a word. This is
   needed because in our specification we often word with @{const "ucast"}'ed values
   (right aligned subranges of bits), largely
   again due to the lack of dependent types (or true type-level functions),
@@ -491,7 +491,13 @@ lemma join_and'[simp]:
 
 section \<open>Data formats\<close>
 
-subsection \<open>Procedure keys\<close>
+text \<open>This section contains definitions of various data formats used in the specification.\<close>
+
+subsection \<open>Common notation\<close>
+
+text \<open>Before we proceed some common notation that would be used later will be established.\<close>
+
+subsubsection \<open>Machine words\<close>
 
 text \<open>
   Procedure keys are represented as 24-byte (192 bits) machine words.
@@ -500,9 +506,7 @@ text \<open>
 type_synonym word24 = "192 word" \<comment> \<open>24 bytes\<close>
 type_synonym key = word24
 
-subsection \<open>Storage state\<close>
-
-text \<open>Byte is 8-bit machine word:\<close>
+text \<open>Byte is 8-bit machine word.\<close>
 type_synonym byte = "8 word"
 
 text \<open>32-byte machine words that are used to model keys and values of the storage.\<close>
@@ -514,7 +518,7 @@ text \<open>
 \<close>
 type_synonym storage = "word32 \<Rightarrow> word32"
 
-subsection \<open>Common notation\<close>
+subsubsection \<open>Concatenation operations\<close>
 
 text \<open>
   Specialize previously defined general concatenation operations for the fixed result size of
@@ -576,13 +580,18 @@ parse_ast_translation \<open>
   end
 \<close>
 
-text \<open>
-  Introduce generic notation for representation/encoding of various "logical"/abstract
-  entities into machine words. We use adhoc overloading to use the same notation for various
-  types of entities (indices, offsets, addresses, capabilities etc.).
-\<close>
+subsection \<open>Datatypes\<close>
 
-subsection \<open>Addresses\<close>
+text \<open>
+  Introduce generic notation for mapping of various entities into high-level and low-level
+  representations. A high-level representation of an entity @{text e} would be written as
+  @{text "\<lceil>e\<rceil>"} and a low-level as @{text "\<lfloor>e\<rfloor>"} accordingly. Using a high-level representation it is
+  easier to express and proof some properties and invariants, but some of them can be expressed only
+  using a low-level representation.
+
+  We use adhoc overloading to use the same notation for various types of entities (indices, offsets,
+  addresses, capabilities etc.).
+\<close>
 
 no_notation floor ("\<lfloor>_\<rfloor>")
 
@@ -591,6 +600,8 @@ consts rep :: "'a \<Rightarrow> 'b" ("\<lfloor>_\<rfloor>")
 no_notation ceiling ("\<lceil>_\<rceil>")
 
 consts abs :: "'a \<Rightarrow> 'b" ("\<lceil>_\<rceil>")
+
+subsubsection \<open>Deterministic inverse functions\<close>
 
 definition "maybe_inv f y \<equiv> if y \<in> range f then Some (the_inv f y) else None"
 
@@ -644,14 +655,15 @@ lemmas inv2_inj[folded inv2_def, simp] = maybe_inv2_inj[OF inj]
 lemmas inv2_inj'[folded inv_def, simp] = maybe_inv2_inj'[OF inj]
 end
 
-text \<open>
-  We don't include @{text Null} capability into the type. It is only handled specially inside the
-  call delegation, otherwise it only complicates the proofs with side conditions @{text "\<noteq> Null"}.
-  So there will be separate type @{text call} defined as @{text "capability option"} to respect
-  the fact that it can be @{text Null}.
+subsubsection \<open>Capability\<close>
 
-  In general, in the following we strive to make all encoding functions injective without any
-  preconditions. All the necessary invariants are built into the type definitions.
+text \<open>
+  Introduce capability type. Note that we don't include @{text Null} capability into it.
+  @{text Null} is only handled specially inside the call delegation, otherwise it only complicates
+  the proofs with side additional cases.
+
+  There will be separate type @{text call} defined as @{text "capability option"} to respect
+  the fact that in some places it can indeed be @{text Null}.
 \<close>
 
 datatype capability =
@@ -661,7 +673,14 @@ datatype capability =
   | Entry
   | Write
   | Log
-  | Gas
+  | Send
+
+text \<open>
+  Capability representation would be its assigned number.
+
+  In general, in the following we strive to make all encoding functions injective without any
+  preconditions. All the necessary invariants are built into the type definitions.
+\<close>
 
 definition cap_type_rep :: "capability \<Rightarrow> byte" where
   "cap_type_rep c \<equiv> case c of
@@ -671,48 +690,81 @@ definition cap_type_rep :: "capability \<Rightarrow> byte" where
     | Entry \<Rightarrow> 0x06
     | Write \<Rightarrow> 0x07
     | Log   \<Rightarrow> 0x08
-    | Gas   \<Rightarrow> 0x09"
+    | Send  \<Rightarrow> 0x09"
 
 adhoc_overloading rep cap_type_rep
 
+text \<open>
+  Capability representation range from @{text 3} to @{text 9} since @{text Null} is not included
+  and @{text 2} does not exist.
+\<close>
+
 lemma cap_type_rep_rng[simp]: "\<lfloor>c\<rfloor> \<in> {0x03..0x09}" for c :: capability
   unfolding cap_type_rep_def by (simp split:capability.split)
+
+text \<open>Capability representation is injective.\<close>
 
 lemma cap_type_rep_inj[simp]: "\<lfloor>c\<^sub>1\<rfloor> = \<lfloor>c\<^sub>2\<rfloor> \<Longrightarrow> c\<^sub>1 = c\<^sub>2" for c\<^sub>1 c\<^sub>2 :: capability
   unfolding cap_type_rep_def
   by (simp split:capability.splits)
 
-lemma width_cap_type: "width (\<lfloor>c\<rfloor>+ 1) \<le> 4" for c :: capability
+text \<open>@{text 4} bits is sufficient to store a capability number.\<close>
+
+lemma width_cap_type: "width \<lfloor>c\<rfloor> \<le> 4" for c :: capability
 proof (rule ccontr, drule not_le_imp_less)
-  assume "4 < width (\<lfloor>c\<rfloor> + 1)"
-  moreover hence "(\<lfloor>c\<rfloor> + 1) !! (width (\<lfloor>c\<rfloor> + 1) - 1)" using nth_width_msb by force
-  ultimately obtain n where "(\<lfloor>c\<rfloor> + 1) !! n" and "n \<ge> 4" by (metis le_step_down_nat nat_less_le)
+  assume "4 < width \<lfloor>c\<rfloor>"
+  moreover hence "\<lfloor>c\<rfloor> !! (width \<lfloor>c\<rfloor> - 1)" using nth_width_msb by force
+  ultimately obtain n where "\<lfloor>c\<rfloor> !! n" and "n \<ge> 4" by (metis le_step_down_nat nat_less_le)
   thus False unfolding cap_type_rep_def by (simp split:capability.splits)
 qed
 
-lemma width_cap_type'[simp]: "4 \<le> n \<Longrightarrow> width (\<lfloor>c\<rfloor> + 1) \<le> n" for c :: capability
+text \<open>So, any number greater than or equal to @{text 4} will be enough.\<close>
+
+lemma width_cap_type'[simp]: "4 \<le> n \<Longrightarrow> width \<lfloor>c\<rfloor> \<le> n" for c :: capability
   using width_cap_type[of c] by simp
+
+text \<open>Capability representation can't be zero.\<close>
 
 lemma cap_type_nonzero[simp]: "\<lfloor>c\<rfloor> \<noteq> 0" for c :: capability
   unfolding cap_type_rep_def by (simp split:capability.splits)
 
+subsubsection \<open>Capability index\<close>
+
+text \<open>Introduce capability index type that is a natural number in range from 0 to 254.\<close>
+
 typedef capability_index = "{i :: nat. i < 2 ^ LENGTH(byte) - 1}"
-  morphisms cap_index_rep' cap_index'
+  morphisms cap_index_rep' cap_index
   by (intro exI[of _ "0"], simp)
 
 adhoc_overloading rep cap_index_rep'
+
+adhoc_overloading abs cap_index
+
+text \<open>
+  Capability index representation is a byte. Zero byte is reserved, so capability index
+  representation starts with 1.
+\<close>
 
 definition "cap_index_rep i \<equiv> of_nat (\<lfloor>i\<rfloor> + 1) :: byte" for i :: capability_index
 
 adhoc_overloading rep cap_index_rep
 
-lemma width_cap_index: "width \<lfloor>i\<rfloor> \<le> 8" for i :: capability_index by simp
+text \<open>
+  A single byte is sufficient to store the least number of bits of capability index representation.
+\<close>
 
-lemma width_cap_index'[simp]: "8 \<le> n \<Longrightarrow> width (\<lfloor>i\<rfloor>) \<le> n" for i :: capability_index by simp
+lemma width_cap_index: "width \<lfloor>i\<rfloor> \<le> LENGTH(byte)" for i :: capability_index by simp
+
+lemma width_cap_index'[simp]: "LENGTH(byte) \<le> n \<Longrightarrow> width \<lfloor>i\<rfloor> \<le> n"
+  for i :: capability_index by simp
+
+text \<open>Capability index representation can't be zero byte.\<close>
 
 lemma cap_index_nonzero[simp]: "\<lfloor>i\<rfloor> \<noteq> 0x00" for i :: capability_index
   unfolding cap_index_rep_def using cap_index_rep'[of i] of_nat_neq_0[of "Suc \<lfloor>i\<rfloor>"]
   by force
+
+text \<open>Capability index representation is injective.\<close>
 
 lemma cap_index_inj[simp]: "(\<lfloor>i\<^sub>1\<rfloor> :: byte) = \<lfloor>i\<^sub>2\<rfloor> \<Longrightarrow> i\<^sub>1 = i\<^sub>2" for i\<^sub>1 i\<^sub>2 :: capability_index
   unfolding cap_index_rep_def
@@ -726,6 +778,10 @@ interpretation cap_index_inv: invertible cap_index_rep ..
 
 adhoc_overloading abs cap_index_inv.inv
 
+subsubsection \<open>Capability offset\<close>
+
+text \<open>The following datatype specifies data offsets for addresses in the procedure heap.\<close>
+
 type_synonym capability_offset = byte
 
 datatype data_offset =
@@ -733,6 +789,19 @@ datatype data_offset =
   | Index
   | Ncaps capability
   | Cap capability capability_index capability_offset
+
+
+text \<open>
+  Machine word representation of data offsets. Using these offsets the following data can be
+  obtained:
+  \begin{itemize}
+    \item @{text Addr}: procedure Ethereum address;
+    \item @{text Index}: procedure index;
+    \item @{text "Ncaps ty"}: the number of capabilities of type @{text "ty"};
+    \item @{text "Cap ty i off"}: capability of type @{text "ty"}, with index @{text "ty"} and
+          offset @{text "off"} into that capability.
+  \end{itemize}
+\<close>
 
 definition data_offset_rep :: "data_offset \<Rightarrow> word32" where
  "data_offset_rep off \<equiv> case off of
@@ -743,22 +812,37 @@ definition data_offset_rep :: "data_offset \<Rightarrow> word32" where
 
 adhoc_overloading rep data_offset_rep
 
+text \<open>Data offset representation is injective.\<close>
+
 lemma data_offset_inj[simp]:
   "\<lfloor>d\<^sub>1\<rfloor> = \<lfloor>d\<^sub>2\<rfloor> \<Longrightarrow> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: data_offset
   unfolding data_offset_rep_def
   by (auto split:data_offset.splits)
 
-lemma width_data_offset: "width \<lfloor>d\<rfloor> \<le> 3 * 8" for d :: data_offset
+text \<open>Least number of bytes to hold the current value of a data offset is @{text 3}.\<close>
+
+lemma width_data_offset: "width \<lfloor>d\<rfloor> \<le> 3 * LENGTH(byte)" for d :: data_offset
   unfolding data_offset_rep_def
   by (simp split:data_offset.splits)
 
-lemma width_data_offset'[simp]: "3 * 8 \<le> n \<Longrightarrow> width \<lfloor>d\<rfloor> \<le> n" for d :: data_offset
+lemma width_data_offset'[simp]: "3 * LENGTH(byte) \<le> n \<Longrightarrow> width \<lfloor>d\<rfloor> \<le> n" for d :: data_offset
   using width_data_offset[of d] by simp
 
+subsubsection \<open>Kernel storage address\<close>
+
+text \<open>
+  Type definition for procedure indices. A procedure index is represented as a natural number that
+  is smaller then @{text "2\<^sup>1\<^sup>9\<^sup>2 - 1"}. It can be zero here, to simplify its future use as an array
+  index, but its low-level representation will start from @{text 1}.
+\<close>
 typedef key_index = "{i :: nat. i < 2 ^ LENGTH(key) - 1}" morphisms key_index_rep' key_index
   by (rule exI[of _ "0"], simp)
 
 adhoc_overloading rep key_index_rep'
+
+adhoc_overloading abs key_index
+
+text \<open>Introduce address datatype that describes possible addresses in the kernel storage.\<close>
 
 datatype address =
    Heap_proc key data_offset
@@ -782,6 +866,19 @@ lemma key_index_inj[simp]: "(\<lfloor>i\<^sub>1\<rfloor> :: key) = \<lfloor>i\<^
 
 abbreviation "kern_prefix \<equiv> 0xffffffff"
 
+text \<open>
+  Machine word representation of the kernel storage layout, which consists of the following
+  addresses:
+  \begin{itemize}
+    \item @{text "Heap_proc k offs"}: procedure heap of key @{text k} and data offset @{text offs};
+    \item @{text Nprocs}: number of procedures;
+    \item @{text "Proc_key i"}: a procedure with index @{text i} in the procedure list;
+    \item @{text Kernel}: kernel Ethereum address;
+    \item @{text Curr_proc}: current procedure;
+    \item @{text Entry_proc}: entry procedure.
+  \end{itemize}
+\<close>
+
 definition addr_rep :: "address \<Rightarrow> word32" where
   "addr_rep a \<equiv> case a of
     Heap_proc k offs \<Rightarrow> kern_prefix \<Join>\<^sub>1 0x00 \<^sub>5\<diamond> k          \<Join>\<^sub>3 \<lfloor>offs\<rfloor>
@@ -792,6 +889,8 @@ definition addr_rep :: "address \<Rightarrow> word32" where
   | Entry_proc       \<Rightarrow> kern_prefix \<Join>\<^sub>1 0x04 \<^sub>5\<diamond> (0 :: key) \<Join>\<^sub>3 0x000000"
 
 adhoc_overloading rep addr_rep
+
+text \<open>Kernel storage address representation is injective.\<close>
 
 lemma addr_inj[simp]: "\<lfloor>a\<^sub>1\<rfloor> = \<lfloor>a\<^sub>2\<rfloor> \<Longrightarrow> a\<^sub>1 = a\<^sub>2" for a\<^sub>1 a\<^sub>2 :: address
   unfolding addr_rep_def
@@ -810,11 +909,26 @@ lemma prefix_bound: "unat prefix_bound < 2 ^ LENGTH(word32)" unfolding rpad_def 
 lemma prefix_bound'[simplified, simp]: "x \<le> unat prefix_bound \<Longrightarrow> x < 2 ^ LENGTH(word32)"
   using prefix_bound by simp
 
-lemma addr_prefix[intro]: "limited_and prefix_bound \<lfloor>a\<rfloor>" for a :: address
+lemma addr_prefix[simp, intro]: "limited_and prefix_bound \<lfloor>a\<rfloor>" for a :: address
   unfolding limited_and_def addr_rep_def
   by (subst word_bw_comms) (auto split:address.split simp del:ucast_bintr)
 
 subsection \<open>Capability formats\<close>
+
+text \<open>
+  We define capability format generally as a @{text locale}. It has two parameters: first one is a
+  @{text "subset"} function (denoted as @{text "\<subseteq>\<^sub>c"}), and second one is a @{text "set_of"} function, which maps
+  a capability to its high-level representation that is expressed as a set.
+  We have an assumption that  @{text "Capability A"} is a subset of @{text "Capability B"} if and
+  only if their high-level representations are also subsets of each other.
+  We call it the well-definedness assumption (denoted as wd) and using it we can prove abstractly
+  that such generic capability format satisfies the properties of reflexivity and transitivity.
+
+  Then sing this locale we can prove that capability formats of all available system calls
+  satisfy the properties of reflexivity and transitivity simply by formalizing corresponding
+  @{text "subset"} and @{text "set_of"} functions and then proving the well-definedness assumption.
+  This process is called locale interpretation.
+\<close>
 
 no_notation abs ("\<lceil>_\<rceil>")
 
@@ -834,15 +948,28 @@ consts sub :: "'a \<Rightarrow> 'a \<Rightarrow> bool" ("(_/ \<subseteq>\<^sub>c
 
 subsubsection \<open>Call, Register and Delete capabilities\<close>
 
+text \<open>
+  Call, Register and Delete capabilities have the same format, so we combine them together here.
+  The capability format defines a range of procedure keys that the capability allows one
+  to call. This is defined as a base procedure key and a prefix.
+
+  Prefix is defined as a natural number, whose length is bounded by a maximum length of a procedure
+  key.
+\<close>
+
 typedef prefix_size = "{n :: nat. n \<le> LENGTH(key)}"
   morphisms prefix_size_rep' prefix_size
   by auto
 
 adhoc_overloading rep prefix_size_rep'
 
+text \<open>Low-level representation of a prefix is a 8-bit machine word (or simply a byte).\<close>
+
 definition "prefix_size_rep s \<equiv> of_nat \<lfloor>s\<rfloor> :: byte" for s :: prefix_size
 
 adhoc_overloading rep prefix_size_rep
+
+text \<open>Prefix representation is injective.\<close>
 
 lemma prefix_size_inj[simp]: "(\<lfloor>s\<^sub>1\<rfloor> :: byte) = \<lfloor>s\<^sub>2\<rfloor> \<Longrightarrow> s\<^sub>1 = s\<^sub>2" for s\<^sub>1 s\<^sub>2 :: prefix_size
   unfolding prefix_size_rep_def using prefix_size_rep'[of s\<^sub>1] prefix_size_rep'[of s\<^sub>2]
@@ -851,7 +978,18 @@ lemma prefix_size_inj[simp]: "(\<lfloor>s\<^sub>1\<rfloor> :: byte) = \<lfloor>s
 lemma prefix_size_rep_less[simp]: "LENGTH(key) \<le> n \<Longrightarrow> \<lfloor>s\<rfloor> \<le> (n :: nat)" for s :: prefix_size
   using prefix_size_rep'[of s] by simp
 
+text \<open>
+  Capabilities that have the same format based on prefixes we call "prefixed". Type of prefixed
+  capabilities is defined as a direct product of prefixes and procedure keys.
+\<close>
+
 type_synonym prefixed_capability = "prefix_size \<times> key"
+
+text \<open>
+  High-level representation of a prefixed capability is a set of all procedure keys whose first
+  @{text s} number of bits (specified by the prefix) are the same as the first @{text s} number of
+  bits of the base procedure key @{text k}.
+\<close>
 
 definition
   "set_of_pref_cap sk \<equiv> let (s, k) = sk in {k' :: key. take \<lfloor>s\<rfloor> (to_bl k') = take \<lfloor>s\<rfloor> (to_bl k)}"
@@ -859,8 +997,17 @@ definition
 
 adhoc_overloading abs set_of_pref_cap
 
+text \<open>
+  A prefixed capability A is a subset of a prefixed capability B if:
+  \begin{itemize}
+    \item the prefix size of A is equal to or greater than the prefix size of B;
+    \item the first s bits (specified by the prefix size of B) of the base procedure of A is equal
+          to the first s bits of the base procedure of B.
+  \end{itemize}
+\<close>
+
 definition "pref_cap_sub A B \<equiv>
-  let (s\<^sub>A, k\<^sub>A) = A in let (s\<^sub>B, k\<^sub>B) = B in
+  let (s\<^sub>A, k\<^sub>A) = A; (s\<^sub>B, k\<^sub>B) = B in
   (\<lfloor>s\<^sub>A\<rfloor> :: nat) \<ge> \<lfloor>s\<^sub>B\<rfloor> \<and> take \<lfloor>s\<^sub>B\<rfloor> (to_bl k\<^sub>A) = take \<lfloor>s\<^sub>B\<rfloor> (to_bl k\<^sub>B)"
   for A B :: prefixed_capability
 
@@ -893,6 +1040,8 @@ proof-
   ultimately show ?thesis using that by blast
 qed
 
+text \<open>Prove the well-definedness assumption for the prefixed capability format.\<close>
+
 lemma pref_cap_sub_iff[iff]: "a \<subseteq>\<^sub>c b = (\<lceil>a\<rceil> \<subseteq> \<lceil>b\<rceil>)" for a b :: prefixed_capability
 proof
   show "a \<subseteq>\<^sub>c b \<Longrightarrow> \<lceil>a\<rceil> \<subseteq> \<lceil>b\<rceil>"
@@ -921,20 +1070,36 @@ qed
 
 lemmas pref_cap_subsets[intro] = cap_sub.intro[OF pref_cap_sub_iff]
 
+text \<open>
+  Locale interpretation to prove the reflexivity and transitivity properties of a subset function
+  of the prefixed capability format.
+\<close>
+
 interpretation pref_cap_sub: cap_sub set_of_pref_cap pref_cap_sub ..
 
+text \<open>
+  Low-level 32-byte machine word representation of the prefixed capability format:
+  \begin{itemize}
+    \item first byte is the prefix;
+    \item next seven bytes are undefined;
+    \item 24 bytes of the base procedure key.
+  \end{itemize}
+\<close>
+
 definition "pref_cap_rep sk r \<equiv>
-  let (s, k) = sk in \<lfloor>s\<rfloor> \<^sub>1\<diamond> k OR r \<restriction> {LENGTH(key) + 1 ..<LENGTH(word32) - LENGTH(byte)}"
+  let (s, k) = sk in \<lfloor>s\<rfloor> \<^sub>1\<diamond> k OR r \<restriction> {LENGTH(key)..<LENGTH(word32) - LENGTH(byte)}"
   for sk :: prefixed_capability
 
 adhoc_overloading rep pref_cap_rep
+
+text \<open>Low-level representation is injective.\<close>
 
 lemma pref_cap_rep_inj_helper_inj[simp]: "\<lfloor>s\<^sub>1\<rfloor> \<^sub>1\<diamond> k\<^sub>1 = \<lfloor>s\<^sub>2\<rfloor> \<^sub>1\<diamond> k\<^sub>2 \<Longrightarrow> s\<^sub>1 = s\<^sub>2 \<and> k\<^sub>1 = k\<^sub>2"
   for s\<^sub>1 s\<^sub>2 :: prefix_size and k\<^sub>1 k\<^sub>2 :: key
   by auto
 
 lemma pref_cap_rep_inj_helper_zero[simplified, simp]:
-  "n \<in> {LENGTH(key) + 1 ..<LENGTH(word32) - LENGTH(byte)} \<Longrightarrow> \<not> (\<lfloor>s\<rfloor> \<^sub>1\<diamond> k) !! n"
+  "n \<in> {LENGTH(key)..<LENGTH(word32) - LENGTH(byte)} \<Longrightarrow> \<not> (\<lfloor>s\<rfloor> \<^sub>1\<diamond> k) !! n"
   for s :: prefix_size and k :: key
   by simp
 
@@ -950,12 +1115,21 @@ adhoc_overloading abs pref_cap_inv.inv2
 
 subsubsection \<open>Write capability\<close>
 
+text \<open>
+  The write capability format includes 2 values: the first is the base address where we can write
+  to storage. The second is the number of additional addresses we can write to.
+
+  Note that write capability must not allow to write to the kernel storage.
+\<close>
+
 typedef write_capability = "{(a :: word32, n). n < unat prefix_bound - unat a}"
   morphisms write_cap_rep' write_cap
   unfolding rpad_def
   by (intro exI[of _ "(0, 0)"], simp)
 
 adhoc_overloading rep write_cap_rep'
+
+text \<open>A write capability is correctly bounded by the lowest kernel storage address.\<close>
 
 lemma write_cap_additional_bound[simplified, simp]:
   "snd \<lfloor>w\<rfloor> < unat prefix_bound" for w :: write_capability
@@ -972,6 +1146,11 @@ lemma write_cap_bound: "unat (fst \<lfloor>w\<rfloor>) + snd \<lfloor>w\<rfloor>
 
 lemma write_cap_bound'[simplified, simp]: "\<lfloor>w\<rfloor> = (a, b) \<Longrightarrow> unat a + b < unat prefix_bound"
   using write_cap_bound[of w] by simp
+
+text \<open>
+  There is no possible overflow in adding the number of additional addresses to the base write
+  address.
+\<close>
 
 lemma write_cap_no_overflow: "fst \<lfloor>w\<rfloor> \<le> fst \<lfloor>w\<rfloor> + of_nat (snd \<lfloor>w\<rfloor>)" for w :: write_capability
   by (simp add:word_le_nat_alt unat_of_nat_eq less_imp_le)
@@ -1039,9 +1218,24 @@ proof (rule ccontr, simp del:word_size len_word ucast_bintr)
   finally show False ..
 qed
 
+text \<open>
+  High-level representation of a write capability is a set of all addresses to which the capability
+  allows to write.
+\<close>
+
 definition "set_of_write_cap w \<equiv> let (a, n) = \<lfloor>w\<rfloor> in {a .. a + of_nat n}" for w :: write_capability
 
 adhoc_overloading abs set_of_write_cap
+
+text \<open>
+  A write capability A is a subset of a write capability B if:
+  \begin{itemize}
+    \item the lowest writable address (which is the base address) of B is less than or equal to
+          the lowest writable address of A;
+    \item the highest writable address (which is base address plus the number of additional keys)
+          of A is less than or equal to the highest writable address of B.
+  \end{itemize}
+\<close>
 
 definition "write_cap_sub A B \<equiv>
   let (a\<^sub>A, n\<^sub>A) = \<lfloor>A\<rfloor> in let (a\<^sub>B, n\<^sub>B) = \<lfloor>B\<rfloor> in a\<^sub>B \<le> a\<^sub>A \<and> a\<^sub>A + of_nat n\<^sub>A \<le> a\<^sub>B + of_nat n\<^sub>B"
@@ -1049,17 +1243,35 @@ definition "write_cap_sub A B \<equiv>
 
 adhoc_overloading sub write_cap_sub
 
+text \<open>Prove the well-definedness assumption for the write capability format.\<close>
+
 lemma write_cap_sub_iff[iff]: "a \<subseteq>\<^sub>c b = (\<lceil>a\<rceil> \<subseteq> \<lceil>b\<rceil>)" for a b :: write_capability
   unfolding write_cap_sub_def set_of_write_cap_def
   by (auto split:prod.splits)
 
 lemmas write_cap_subsets[intro] = cap_sub.intro[OF write_cap_sub_iff]
 
+text \<open>
+  Locale interpretation to prove the reflexivity and transitivity properties of a subset function
+  of the write capability format.
+\<close>
+
 interpretation write_cap_sub: cap_sub set_of_write_cap write_cap_sub ..
+
+text \<open>
+  Low-level representation of the write capability format is a 32-byte machine word list of two
+  elements:
+  \begin{itemize}
+    \item the base address;
+    \item the number of additional addresses (also as a machine word).
+  \end{itemize}
+\<close>
 
 definition "write_cap_rep w \<equiv> let (a, n) = \<lfloor>w\<rfloor> in (a, of_nat n :: word32)"
 
 adhoc_overloading rep write_cap_rep
+
+text \<open>Low-level representation is injective.\<close>
 
 lemma write_cap_inj[simp]: "(\<lfloor>w\<^sub>1\<rfloor> :: word32 \<times> word32) = \<lfloor>w\<^sub>2\<rfloor> \<Longrightarrow> w\<^sub>1 = w\<^sub>2"
   for w\<^sub>1 w\<^sub>2 :: write_capability
@@ -1094,25 +1306,49 @@ lemma write_cap_safe[simp]: "a \<in> \<lceil>w\<rceil> \<Longrightarrow> a \<not
 
 subsubsection \<open>Log capability\<close>
 
+text \<open>
+  The log capability format includes between 0 and 4 values for log topics and 1 value that
+  specifies the number of enforced topics. We model it as a 32-byte machine word list whose length
+  is between 0 and 4.
+\<close>
+
 typedef log_capability = "{ws :: word32 list. length ws \<le> 4}"
   morphisms log_cap_rep' log_capability
   by (intro exI[of _ "[]"], simp)
 
 adhoc_overloading rep log_cap_rep'
 
+text \<open>
+  High-level representation of a log capability is a set of all possible log capabilities whose
+  list prefix in the same and equals to the given log capability.
+\<close>
+
 definition "set_of_log_cap l \<equiv> {xs . prefix \<lfloor>l\<rfloor> xs}" for l :: log_capability
 
 adhoc_overloading abs set_of_log_cap
 
+text \<open>
+  A log capability A is a subset of a log capability B if for each log topic of B the topic
+  is either undefined or equal to that of A. But here we specify that A is a subset of B  if B is a
+  list prefix for A. Below we prove that this conditions are equivalent.
+\<close>
+
 definition "log_cap_sub A B \<equiv> prefix \<lfloor>B\<rfloor> \<lfloor>A\<rfloor>" for A B :: log_capability
 
 adhoc_overloading sub log_cap_sub
+
+text \<open>Prove the well-definedness assumption for the log capability format.\<close>
 
 lemma log_cap_sub_iff[iff]: "a \<subseteq>\<^sub>c b = (\<lceil>a\<rceil> \<subseteq> \<lceil>b\<rceil>)" for a b :: log_capability
   unfolding log_cap_sub_def set_of_log_cap_def
   by force
 
 lemmas log_cap_subsets[intro] = cap_sub.intro[OF log_cap_sub_iff]
+
+text \<open>
+  Locale interpretation to prove the reflexivity and transitivity properties of a subset function
+  of the log capability format.
+\<close>
 
 interpretation log_cap_sub: cap_sub set_of_log_cap log_cap_sub ..
 
@@ -1140,11 +1376,20 @@ proof
   }
 qed
 
+
+text \<open>
+  Low-level representation of the log capability format is a 32-byte machine word list that includes
+  between 1 and 5 values. First value is the number of enforced topics and the rest are possible
+  values for log topics.
+\<close>
+
 definition "log_cap_rep l \<equiv> (of_nat (length \<lfloor>l\<rfloor>) :: word32) # \<lfloor>l\<rfloor>"
 
 no_adhoc_overloading rep log_cap_rep'
 
 adhoc_overloading rep log_cap_rep
+
+text \<open>Low-level representation is injective.\<close>
 
 lemma log_cap_rep_inj[simp]: "(\<lfloor>l\<^sub>1\<rfloor> :: word32 list) = \<lfloor>l\<^sub>2\<rfloor> \<Longrightarrow> l\<^sub>1 = l\<^sub>2" for l\<^sub>1 l\<^sub>2 :: log_capability
   unfolding log_cap_rep_def using log_cap_rep'_inject by auto
@@ -1153,41 +1398,441 @@ lemmas log_cap_rep_invertible[intro] = invertible.intro[OF injI, OF log_cap_rep_
 
 interpretation log_cap_inv: invertible log_cap_rep ..
 
+adhoc_overloading abs log_cap_inv.inv
+
+lemma log_cap_rep_length[simp]: "length \<lfloor>l\<rfloor> = length (log_cap_rep' l) + 1"
+  unfolding log_cap_rep_def by simp
+
+subsubsection \<open>External call capability\<close>
+
+text \<open>
+  We model the external call capability format using a record with two fields: @{text "allow_addr"}
+  and @{text "may_send"}, with the following semantic:
+  \begin{itemize}
+    \item if the field  @{text "allow_addr"} has value, then only the Ethereum  address specified
+          by it can be called, otherwise any address can be called. This models the @{text CallAny}
+          flag and the @{text EthAddress} together;
+    \item if the value of the field  @{text "may_send"} is true, the any quantity of Ether can be
+          sent, otherwise no Ether can be sent. It models the @{text SendValue} flag.
+  \end{itemize}
+\<close>
+
+type_synonym ethereum_address = "160 word" \<comment> \<open>20 bytes\<close>
+
+record external_call_capability =
+  allow_addr :: "ethereum_address option"
+  may_send   :: bool
+
+text \<open>
+  High-level representation of a external call capability is a set of all possible pairs of account
+  addresses and Ether amount that can be sent using this capability.
+\<close>
+
+definition "set_of_ext_cap e \<equiv>
+  {(a, v) . case_option True ((=) a) (allow_addr e) \<and> (\<not> may_send e \<longrightarrow> v = (0 :: word32)) }"
+
+adhoc_overloading abs set_of_ext_cap
+
+text \<open>
+  An external call capability A is a subset of an external call capability B if and only if:
+  \begin{itemize}
+    \item if A allows to call any Ethereum address, then B also must allow to call any address;
+    \item if A allows to call only specified Ethereum address, then B either must allow to call any
+          address, or it must allow to only call the same address as A;
+    \item if A may send Ether, then B also must be able to send Ether.
+  \end{itemize}
+\<close>
+
+abbreviation "allow_any e \<equiv> Option.is_none (allow_addr e)"
+
+abbreviation "the_addr e \<equiv> the (allow_addr e)"
+
+definition "ext_cap_sub A B \<equiv>
+    (allow_any A \<longrightarrow> allow_any B)
+  \<and> ((\<not> allow_any A \<longrightarrow> allow_any B) \<or> (the_addr A = the_addr B))
+  \<and> (may_send A \<longrightarrow> may_send B)"
+  for A B :: external_call_capability
+
+adhoc_overloading sub ext_cap_sub
+
+text \<open>Prove the well-definedness assumption for the external call capability format.\<close>
+
+lemma ext_cap_sub_iff[iff]: "a \<subseteq>\<^sub>c b = (\<lceil>a\<rceil> \<subseteq> \<lceil>b\<rceil>)" for a b :: external_call_capability
+proof-
+  {
+    fix v' :: word32
+    have "\<exists> v. v \<noteq> v'" by (intro exI[of _ "v' - 1"], simp)
+  } note [intro] = this
+  {
+    fix a' :: ethereum_address
+    have "\<exists> a. a \<noteq> a'" by (intro exI[of _ "a' - 1"], simp)
+  } note [intro] = this
+  show ?thesis
+  unfolding set_of_ext_cap_def ext_cap_sub_def
+  by (cases "allow_addr a";
+      cases "allow_addr b";
+      cases "may_send a";
+      cases "may_send b",
+      auto iff:subset_iff)
+qed
+
+lemmas ext_cap_subsets[intro] = cap_sub.intro[OF ext_cap_sub_iff]
+
+text \<open>
+  Locale interpretation to prove the reflexivity and transitivity properties of a subset function
+  of the external call capability format.
+\<close>
+
+interpretation ext_cap_sub: cap_sub set_of_ext_cap ext_cap_sub ..
+
+text \<open>Helper functions to define low-level representation.\<close>
+
+definition "ext_cap_val e \<equiv>
+  (of_bl ([allow_any e, may_send e]
+          @ replicate 6 False) :: byte) \<^sub>1\<diamond> case_option 0 id (allow_addr e)"
+
+definition "ext_cap_frame e \<equiv>
+  {if allow_any e then 0 else LENGTH(ethereum_address)..<LENGTH(word32) - LENGTH(byte)}"
+
+text \<open>
+  Low-level 32-byte machine word representation of the external call capability format:
+  \begin{itemize}
+    \item first bit is the CallAny flag;
+    \item second bit is the SendValue flag;
+    \item 6 undefined bits;
+    \item 11 undefined bytes;
+    \item 20 bytes of the Ethereum address.
+  \end{itemize}
+\<close>
+
+definition "ext_cap_rep e r \<equiv>  ext_cap_val e OR r \<restriction> ext_cap_frame e"
+  for e :: external_call_capability
+
+adhoc_overloading rep ext_cap_rep
+
+text \<open>Low-level representation is injective.\<close>
+
+lemma ext_cap_rep_helper_inj[dest]: "ext_cap_val e\<^sub>1 = ext_cap_val e\<^sub>2 \<Longrightarrow> e\<^sub>1 = e\<^sub>2"
+  for e\<^sub>1 e\<^sub>2 :: external_call_capability
+  unfolding ext_cap_val_def
+  by (cases "allow_any e\<^sub>1"; cases "allow_any e\<^sub>2")
+     (auto simp del:of_bl_True of_bl_False dest:word_bl.Abs_eqD split:option.splits)
+
+lemma ext_cap_rep_helper_zero[simp]: "n \<in> ext_cap_frame e \<Longrightarrow> \<not> ext_cap_val e !! n"
+  unfolding ext_cap_frame_def ext_cap_val_def
+  by (auto simp del:of_bl_True split:option.split)
+
+lemma ext_cap_rep_inj[simp]: "\<lfloor>e\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>e\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> e\<^sub>1 = e\<^sub>2" for e\<^sub>1 e\<^sub>2 :: external_call_capability
+proof (erule rev_mp; cases "allow_any e\<^sub>1"; cases "allow_any e\<^sub>2")
+  let ?goal = "\<lfloor>e\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>e\<^sub>2\<rfloor> r\<^sub>2 \<longrightarrow> e\<^sub>1 = e\<^sub>2"
+  {
+    {
+      fix P e
+      have "allow_any e \<Longrightarrow> (\<And>s. P \<lparr> allow_addr = None, may_send = s \<rparr>) \<Longrightarrow> P e"
+        by (cases e, simp add:Option.is_none_def)
+    } note[elim!] = this
+    note [dest] =
+      restrict_inj2[of "\<lambda> s (_ :: unit). ext_cap_val \<lparr> allow_addr = None, may_send = s \<rparr>"]
+    assume "allow_any e\<^sub>1" and "allow_any e\<^sub>2"
+    thus ?goal unfolding ext_cap_rep_def by (auto simp add:ext_cap_frame_def)
+  next
+    {
+      fix P e
+      have "\<not> allow_any e \<Longrightarrow> (\<And>a s. P \<lparr> allow_addr = Some a, may_send = s \<rparr>) \<Longrightarrow> P e"
+        by (cases e, auto simp add:Option.is_none_def)
+    } note [elim!] = this
+    note [dest] = restrict_inj2[of "\<lambda> a s. ext_cap_val \<lparr> allow_addr = Some a, may_send = s \<rparr>"]
+    assume "\<not> allow_any e\<^sub>1" and "\<not> allow_any e\<^sub>2"
+    thus ?goal unfolding ext_cap_rep_def by (auto simp add:ext_cap_frame_def)
+  next
+    let ?neq = "allow_any e\<^sub>1 \<noteq> allow_any e\<^sub>2"
+    {
+      presume ?neq
+      moreover hence "msb (ext_cap_val e\<^sub>1) \<noteq> msb (ext_cap_val e\<^sub>2)"
+        unfolding ext_cap_val_def msb_nth
+        by (auto simp del:of_bl_True of_bl_False simp add:pad_join_high iff:test_bit_of_bl)
+      ultimately show ?goal
+        unfolding ext_cap_rep_def ext_cap_frame_def word_eq_iff msb_nth word_or_nth nth_restrict
+        by simp  (meson less_irrefl numeral_less_iff semiring_norm(76) semiring_norm(81))
+      thus ?goal .
+    next
+      assume "allow_any e\<^sub>1" and "\<not> allow_any e\<^sub>2"
+      thus ?neq by simp
+    next
+      assume "\<not> allow_any e\<^sub>1" and "allow_any e\<^sub>2"
+      thus ?neq by simp
+    }
+  }
+qed
+
+lemmas ext_cap_invertible[intro] = invertible2.intro[OF inj2I, OF ext_cap_rep_inj]
+
+interpretation ext_cap_inv: invertible2 ext_cap_rep ..
+
+adhoc_overloading abs ext_cap_inv.inv2
+
 section \<open>Kernel state\<close>
 
-type_synonym eth_addr = "160 word" \<comment> \<open>20 bytes\<close>
+subsection \<open>Procedure data\<close>
 
-typedef 'a capability_list = "{l :: 'a list. length l < 2 ^ 8 - 1}"
+typedef 'a capability_list = "{l :: 'a list. length l < 2 ^ LENGTH(byte) - 1}"
   morphisms cap_list_rep cap_list
   by (intro exI[of _ "[]"], simp)
 
 adhoc_overloading rep cap_list_rep
 
 record procedure =
-  eth_addr   :: eth_addr
+  eth_addr   :: ethereum_address
   call_caps  :: "prefixed_capability capability_list"
   reg_caps   :: "prefixed_capability capability_list"
   del_caps   :: "prefixed_capability capability_list"
   entry_cap  :: bool
   write_caps :: "write_capability capability_list"
+  log_caps   :: "log_capability capability_list"
+  ext_caps   :: "external_call_capability capability_list"
 
 lemmas alist_simps = size_alist_def alist.Alist_inverse alist.impl_of_inverse
 
 declare alist_simps[simp]
 
-typedef procedure_list = "{l :: (key, procedure) alist. size l < 2 ^ LENGTH(key)}"
+definition "caps_rep (k :: key) p r ty (i :: capability_index) (off :: capability_offset) \<equiv>
+  let addr = \<lfloor>Heap_proc k (Cap ty i off)\<rfloor> in
+  case ty of
+    Call  \<Rightarrow> if \<lfloor>i\<rfloor> < length \<lfloor>call_caps p\<rfloor> \<and> off = 0
+             then \<lfloor>\<lfloor>call_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rfloor> (r addr)
+             else r addr
+
+  | Reg   \<Rightarrow> if \<lfloor>i\<rfloor> < length \<lfloor>reg_caps p\<rfloor> \<and> off = 0
+             then \<lfloor>\<lfloor>reg_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rfloor> (r addr)
+             else r addr
+  | Del   \<Rightarrow> if \<lfloor>i\<rfloor> < length \<lfloor>del_caps p\<rfloor> \<and> off = 0
+             then \<lfloor>\<lfloor>del_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rfloor> (r addr)
+             else r addr
+  | Entry \<Rightarrow> r addr
+  | Write \<Rightarrow> if \<lfloor>i\<rfloor> < length \<lfloor>write_caps p\<rfloor>
+             then
+               if off = 0x00      then fst (\<lfloor>\<lfloor>write_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rfloor> :: _ \<times> word32)
+               else if off = 0x01 then snd \<lfloor>\<lfloor>write_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rfloor>
+               else                    r addr
+             else                      r addr
+  | Log   \<Rightarrow> if \<lfloor>i\<rfloor> < length \<lfloor>log_caps p\<rfloor>
+             then
+               if unat off < length \<lfloor>\<lfloor>log_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rfloor> then \<lfloor>\<lfloor>log_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rfloor> ! unat off
+               else                                          r addr
+             else                                            r addr
+  | Send  \<Rightarrow> if \<lfloor>i\<rfloor> < length \<lfloor>ext_caps p\<rfloor> \<and> off = 0
+             then \<lfloor>\<lfloor>ext_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rfloor> (r addr)
+             else r addr"
+
+lemma caps_rep_inj[dest]:
+  assumes "caps_rep k\<^sub>1 p\<^sub>1 r\<^sub>1 = caps_rep k\<^sub>2 p\<^sub>2 r\<^sub>2"
+  shows   "length \<lfloor>call_caps p\<^sub>1\<rfloor> = length \<lfloor>call_caps p\<^sub>2\<rfloor>   \<Longrightarrow> call_caps p\<^sub>1 = call_caps p\<^sub>2"
+    and   "length \<lfloor>reg_caps p\<^sub>1\<rfloor> = length \<lfloor>reg_caps p\<^sub>2\<rfloor>     \<Longrightarrow> reg_caps p\<^sub>1 = reg_caps p\<^sub>2"
+    and   "length \<lfloor>del_caps p\<^sub>1\<rfloor> = length \<lfloor>del_caps p\<^sub>2\<rfloor>     \<Longrightarrow> del_caps p\<^sub>1 = del_caps p\<^sub>2"
+    and   "length \<lfloor>write_caps p\<^sub>1\<rfloor> = length \<lfloor>write_caps p\<^sub>2\<rfloor> \<Longrightarrow> write_caps p\<^sub>1 = write_caps p\<^sub>2"
+    and   "length \<lfloor>log_caps p\<^sub>1\<rfloor> = length \<lfloor>log_caps p\<^sub>2\<rfloor>     \<Longrightarrow> log_caps p\<^sub>1 = log_caps p\<^sub>2"
+    and   "length \<lfloor>ext_caps p\<^sub>1\<rfloor> = length \<lfloor>ext_caps p\<^sub>2\<rfloor>     \<Longrightarrow> ext_caps p\<^sub>1 = ext_caps p\<^sub>2"
+proof-
+  from assms have eq:"\<And> ty i off. caps_rep k\<^sub>1 p\<^sub>1 r\<^sub>1 ty i off = caps_rep k\<^sub>2 p\<^sub>2 r\<^sub>2 ty i off"
+    by simp
+  note Let_def[simp] if_splits[split] nth_equalityI[intro] cap_list_rep_inject[symmetric, iff]
+  {
+    fix i :: nat
+    let ?addr\<^sub>1 = "\<lfloor>Heap_proc k\<^sub>1 (Cap Call \<lceil>i\<rceil> 0)\<rfloor>"
+    and ?addr\<^sub>2 = "\<lfloor>Heap_proc k\<^sub>2 (Cap Call \<lceil>i\<rceil> 0)\<rfloor>"
+    assume idx:"i < length \<lfloor>call_caps p\<^sub>1\<rfloor>"
+    hence 0:"i \<in>  {i. i < 2 ^ LENGTH(8 word) - 1}"
+      using capability_list.cap_list_rep[of "call_caps p\<^sub>1"] by simp
+    assume "length \<lfloor>call_caps p\<^sub>1\<rfloor> = length \<lfloor>call_caps p\<^sub>2\<rfloor>"
+    with idx eq[of Call "\<lceil>i\<rceil>" 0]
+    have "\<lfloor>\<lfloor>call_caps p\<^sub>1\<rfloor> ! i\<rfloor> (r\<^sub>1 ?addr\<^sub>1) = \<lfloor>\<lfloor>call_caps p\<^sub>2\<rfloor> ! i\<rfloor> (r\<^sub>2 ?addr\<^sub>2)"
+      unfolding caps_rep_def by (simp add:cap_index_inverse[OF 0])
+  }
+  thus "length \<lfloor>call_caps p\<^sub>1\<rfloor> = length \<lfloor>call_caps p\<^sub>2\<rfloor> \<Longrightarrow> call_caps p\<^sub>1 = call_caps p\<^sub>2"
+    by force
+
+  {
+    fix i :: nat
+    let ?addr\<^sub>1 = "\<lfloor>Heap_proc k\<^sub>1 (Cap Reg \<lceil>i\<rceil> 0)\<rfloor>"
+    and ?addr\<^sub>2 = "\<lfloor>Heap_proc k\<^sub>2 (Cap Reg \<lceil>i\<rceil> 0)\<rfloor>"
+    assume idx:"i < length \<lfloor>reg_caps p\<^sub>1\<rfloor>"
+    hence 0:"i \<in>  {i. i < 2 ^ LENGTH(8 word) - 1}"
+      using capability_list.cap_list_rep[of "reg_caps p\<^sub>1"] by simp
+    assume "length \<lfloor>reg_caps p\<^sub>1\<rfloor> = length \<lfloor>reg_caps p\<^sub>2\<rfloor>"
+    with idx eq[of Reg "\<lceil>i\<rceil>" 0]
+    have "\<lfloor>\<lfloor>reg_caps p\<^sub>1\<rfloor> ! i\<rfloor> (r\<^sub>1 ?addr\<^sub>1) = \<lfloor>\<lfloor>reg_caps p\<^sub>2\<rfloor> ! i\<rfloor> (r\<^sub>2 ?addr\<^sub>2)"
+      unfolding caps_rep_def by (simp add:cap_index_inverse[OF 0])
+  }
+  thus "length \<lfloor>reg_caps p\<^sub>1\<rfloor> = length \<lfloor>reg_caps p\<^sub>2\<rfloor> \<Longrightarrow> reg_caps p\<^sub>1 = reg_caps p\<^sub>2"
+    by force
+
+  {
+    fix i :: nat
+    let ?addr\<^sub>1 = "\<lfloor>Heap_proc k\<^sub>1 (Cap Del \<lceil>i\<rceil> 0)\<rfloor>"
+    and ?addr\<^sub>2 = "\<lfloor>Heap_proc k\<^sub>2 (Cap Del \<lceil>i\<rceil> 0)\<rfloor>"
+    assume idx:"i < length \<lfloor>del_caps p\<^sub>1\<rfloor>"
+    hence 0:"i \<in>  {i. i < 2 ^ LENGTH(8 word) - 1}"
+      using capability_list.cap_list_rep[of "del_caps p\<^sub>1"] by simp
+    assume "length \<lfloor>del_caps p\<^sub>1\<rfloor> = length \<lfloor>del_caps p\<^sub>2\<rfloor>"
+    with idx eq[of Del "\<lceil>i\<rceil>" 0]
+    have "\<lfloor>\<lfloor>del_caps p\<^sub>1\<rfloor> ! i\<rfloor> (r\<^sub>1 ?addr\<^sub>1) = \<lfloor>\<lfloor>del_caps p\<^sub>2\<rfloor> ! i\<rfloor> (r\<^sub>2 ?addr\<^sub>2)"
+      unfolding caps_rep_def by (simp add:cap_index_inverse[OF 0])
+  }
+  thus "length \<lfloor>del_caps p\<^sub>1\<rfloor> = length \<lfloor>del_caps p\<^sub>2\<rfloor> \<Longrightarrow> del_caps p\<^sub>1 = del_caps p\<^sub>2"
+    by force
+
+  {
+    fix i :: nat
+    let ?addr\<^sub>1 = "\<lfloor>Heap_proc k\<^sub>1 (Cap Send \<lceil>i\<rceil> 0)\<rfloor>"
+    and ?addr\<^sub>2 = "\<lfloor>Heap_proc k\<^sub>2 (Cap Send \<lceil>i\<rceil> 0)\<rfloor>"
+    assume idx:"i < length \<lfloor>ext_caps p\<^sub>1\<rfloor>"
+    hence 0:"i \<in>  {i. i < 2 ^ LENGTH(8 word) - 1}"
+      using capability_list.cap_list_rep[of "ext_caps p\<^sub>1"] by simp
+    assume "length \<lfloor>ext_caps p\<^sub>1\<rfloor> = length \<lfloor>ext_caps p\<^sub>2\<rfloor>"
+    with idx eq[of Send "\<lceil>i\<rceil>" 0]
+    have "\<lfloor>\<lfloor>ext_caps p\<^sub>1\<rfloor> ! i\<rfloor> (r\<^sub>1 ?addr\<^sub>1) = \<lfloor>\<lfloor>ext_caps p\<^sub>2\<rfloor> ! i\<rfloor> (r\<^sub>2 ?addr\<^sub>2)"
+      unfolding caps_rep_def by (simp add:cap_index_inverse[OF 0])
+  }
+  thus "length \<lfloor>ext_caps p\<^sub>1\<rfloor> = length \<lfloor>ext_caps p\<^sub>2\<rfloor> \<Longrightarrow> ext_caps p\<^sub>1 = ext_caps p\<^sub>2"
+    by force
+
+  {
+    fix i :: nat
+    let ?addr\<^sub>1 = "\<lfloor>Heap_proc k\<^sub>1 (Cap Write \<lceil>i\<rceil> 0)\<rfloor>"
+    and ?addr\<^sub>2 = "\<lfloor>Heap_proc k\<^sub>2 (Cap Write \<lceil>i\<rceil> 0)\<rfloor>"
+    assume idx:"i < length \<lfloor>write_caps p\<^sub>1\<rfloor>"
+    hence 0:"i \<in>  {i. i < 2 ^ LENGTH(8 word) - 1}"
+      using capability_list.cap_list_rep[of "write_caps p\<^sub>1"] by simp
+    assume "length \<lfloor>write_caps p\<^sub>1\<rfloor> = length \<lfloor>write_caps p\<^sub>2\<rfloor>"
+    with idx eq[of Write "\<lceil>i\<rceil>" "0x00"] eq[of Write "\<lceil>i\<rceil>" "0x01"]
+    have "(\<lfloor>\<lfloor>write_caps p\<^sub>1\<rfloor> ! i\<rfloor> :: word32 \<times> word32) = \<lfloor>\<lfloor>write_caps p\<^sub>2\<rfloor> ! i\<rfloor>"
+      unfolding caps_rep_def by (simp add:cap_index_inverse[OF 0] prod_eqI)
+  }
+  thus "length \<lfloor>write_caps p\<^sub>1\<rfloor> = length \<lfloor>write_caps p\<^sub>2\<rfloor> \<Longrightarrow> write_caps p\<^sub>1 = write_caps p\<^sub>2"
+    by force
+
+  {
+    fix i :: nat
+    let ?addr\<^sub>1 = "\<lfloor>Heap_proc k\<^sub>1 (Cap Log \<lceil>i\<rceil> 0)\<rfloor>"
+    and ?addr\<^sub>2 = "\<lfloor>Heap_proc k\<^sub>2 (Cap Log \<lceil>i\<rceil> 0)\<rfloor>"
+    assume idx:"i < length \<lfloor>log_caps p\<^sub>1\<rfloor>"
+    hence 0:"i \<in>  {i. i < 2 ^ LENGTH(8 word) - 1}"
+      using capability_list.cap_list_rep[of "log_caps p\<^sub>1"] by simp
+    {
+      fix l
+      from log_cap_rep'[of l]
+      have "unat (of_nat (length (log_cap_rep' l)) :: word32) = length (log_cap_rep' l)"
+        by (simp add:unat_of_nat_eq)
+    }
+    moreover assume len:"length \<lfloor>log_caps p\<^sub>1\<rfloor> = length \<lfloor>log_caps p\<^sub>2\<rfloor>"
+    ultimately have rep_len:"length \<lfloor>\<lfloor>log_caps p\<^sub>1\<rfloor> ! i\<rfloor> = length \<lfloor>\<lfloor>log_caps p\<^sub>2\<rfloor> ! i\<rfloor>"
+      using idx eq[of Log "\<lceil>i\<rceil>" 0]
+      unfolding caps_rep_def log_cap_rep_def
+      by (auto simp add:cap_index_inverse[OF 0], metis)
+    {
+      fix off
+      assume off:"off < length \<lfloor>\<lfloor>log_caps p\<^sub>1\<rfloor> ! i\<rfloor>"
+      hence "unat (of_nat off :: byte) = off"
+        using log_cap_rep'[of "\<lfloor>log_caps p\<^sub>1\<rfloor> ! i"] by (simp add:unat_of_nat_eq)
+      with idx off eq[of Log "\<lceil>i\<rceil>" "of_nat off"] len rep_len
+      have "\<lfloor>\<lfloor>log_caps p\<^sub>1\<rfloor> ! i\<rfloor> ! off = \<lfloor>\<lfloor>log_caps p\<^sub>2\<rfloor> ! i\<rfloor> ! off"
+        unfolding caps_rep_def
+        by (auto simp add:cap_index_inverse[OF 0])
+    }
+    with len rep_len have "\<lfloor>\<lfloor>log_caps p\<^sub>1\<rfloor> ! i\<rfloor> = \<lfloor>\<lfloor>log_caps p\<^sub>2\<rfloor> ! i\<rfloor>" by auto
+  }
+  thus "length \<lfloor>log_caps p\<^sub>1\<rfloor> = length \<lfloor>log_caps p\<^sub>2\<rfloor> \<Longrightarrow> log_caps p\<^sub>1 = log_caps p\<^sub>2"
+    by force
+qed
+
+definition "proc_rep k (i :: key_index) (p :: procedure) r (off :: data_offset) \<equiv>
+  let addr = \<lfloor>off\<rfloor> in
+  let ncaps = \<lambda> n. ucast (of_nat n :: byte) OR r addr \<restriction> {LENGTH(byte)..<LENGTH(word32)} in
+  case off of
+    Addr         \<Rightarrow> ucast (eth_addr p) OR r addr \<restriction> {LENGTH(ethereum_address) ..<LENGTH(word32)}
+  | Index        \<Rightarrow> ucast \<lfloor>i\<rfloor> OR r addr \<restriction> {LENGTH(key) ..<LENGTH(word32)}
+  | Ncaps Call   \<Rightarrow> ncaps (length \<lfloor>call_caps p\<rfloor>)
+  | Ncaps Reg    \<Rightarrow> ncaps (length \<lfloor>reg_caps p\<rfloor>)
+  | Ncaps Del    \<Rightarrow> ncaps (length \<lfloor>del_caps p\<rfloor>)
+  | Ncaps Entry  \<Rightarrow> ncaps (of_bool (entry_cap p))
+  | Ncaps Write  \<Rightarrow> ncaps (length \<lfloor>write_caps p\<rfloor>)
+  | Ncaps Log    \<Rightarrow> ncaps (length \<lfloor>log_caps p\<rfloor>)
+  | Ncaps Send   \<Rightarrow> ncaps (length \<lfloor>ext_caps p\<rfloor>)
+  | Cap ty i off \<Rightarrow> caps_rep k p r ty i off"
+
+lemma restrict_ucast_inj[simplified, dest!]:
+  "\<lbrakk>ucast x\<^sub>1 OR y\<^sub>1 \<restriction> {l ..<LENGTH(word32)} = ucast x\<^sub>2 OR y\<^sub>2 \<restriction> {l ..<LENGTH(word32)};
+   l = LENGTH('b); LENGTH('b) < LENGTH(word32)\<rbrakk> \<Longrightarrow> x\<^sub>1 = x\<^sub>2"
+  for x\<^sub>1 x\<^sub>2 :: "'b::len word" and y\<^sub>1 y\<^sub>2 :: word32
+    by (auto dest!:restrict_inj2[of "\<lambda> x (_ :: unit). ucast x"] intro:ucast_up_inj)
+
+lemma proc_rep_inj[dest]:
+  assumes "proc_rep k\<^sub>1 i\<^sub>1 p\<^sub>1 r\<^sub>1 = proc_rep k\<^sub>2 i\<^sub>2 p\<^sub>2 r\<^sub>2"
+  shows   "p\<^sub>1 = p\<^sub>2" and "i\<^sub>1 = i\<^sub>2"
+proof (rule procedure.equality)
+  from assms have eq:"\<And> off. proc_rep k\<^sub>1 i\<^sub>1 p\<^sub>1 r\<^sub>1 off = proc_rep k\<^sub>2 i\<^sub>2 p\<^sub>2 r\<^sub>2 off" by simp
+
+  from eq[of Addr] show "eth_addr p\<^sub>1 = eth_addr p\<^sub>2"
+    unfolding proc_rep_def by auto
+  from eq[of Index] show "i\<^sub>1 = i\<^sub>2" unfolding proc_rep_def by auto
+
+  {
+    fix l :: "'b capability_list"
+    from cap_list_rep[of l]
+    have "unat (of_nat (length \<lfloor>l\<rfloor>) :: byte) = length \<lfloor>l\<rfloor>" by (simp add:unat_of_nat_eq)
+  }
+  hence [dest]:"\<And> l\<^sub>1 :: 'b capability_list. \<And> l\<^sub>2 :: 'b capability_list.
+           (of_nat (length \<lfloor>l\<^sub>1\<rfloor>) :: byte) = of_nat (length \<lfloor>l\<^sub>2\<rfloor>) \<Longrightarrow> length \<lfloor>l\<^sub>1\<rfloor> = length \<lfloor>l\<^sub>2\<rfloor>"
+    by metis
+
+  from eq[of "Cap _ _ _"] have caps:"caps_rep k\<^sub>1 p\<^sub>1 r\<^sub>1 = caps_rep k\<^sub>2 p\<^sub>2 r\<^sub>2"
+    unfolding proc_rep_def by force
+
+  from eq[of "Ncaps Call"] have "length \<lfloor>call_caps p\<^sub>1\<rfloor> = length \<lfloor>call_caps p\<^sub>2\<rfloor>"
+    unfolding proc_rep_def by auto
+  with caps show "call_caps p\<^sub>1 = call_caps p\<^sub>2" ..
+
+  from eq[of "Ncaps Reg"] have "length \<lfloor>reg_caps p\<^sub>1\<rfloor> = length \<lfloor>reg_caps p\<^sub>2\<rfloor>"
+    unfolding proc_rep_def by auto
+  with caps show "reg_caps p\<^sub>1 = reg_caps p\<^sub>2" ..
+
+  from eq[of "Ncaps Del"] have "length \<lfloor>del_caps p\<^sub>1\<rfloor> = length \<lfloor>del_caps p\<^sub>2\<rfloor>"
+    unfolding proc_rep_def by auto
+  with caps show "del_caps p\<^sub>1 = del_caps p\<^sub>2" ..
+
+  from eq[of "Ncaps Write"] have "length \<lfloor>write_caps p\<^sub>1\<rfloor> = length \<lfloor>write_caps p\<^sub>2\<rfloor>"
+    unfolding proc_rep_def by auto
+  with caps show "write_caps p\<^sub>1 = write_caps p\<^sub>2" ..
+
+  from eq[of "Ncaps Log"] have "length \<lfloor>log_caps p\<^sub>1\<rfloor> = length \<lfloor>log_caps p\<^sub>2\<rfloor>"
+    unfolding proc_rep_def by auto
+  with caps show "log_caps p\<^sub>1 = log_caps p\<^sub>2" ..
+
+  from eq[of "Ncaps Send"] have "length \<lfloor>ext_caps p\<^sub>1\<rfloor> = length \<lfloor>ext_caps p\<^sub>2\<rfloor>"
+    unfolding proc_rep_def by auto
+  with caps show "ext_caps p\<^sub>1 = ext_caps p\<^sub>2" ..
+
+  from eq[of "Ncaps Entry"] show "entry_cap p\<^sub>1 = entry_cap p\<^sub>2"
+    unfolding proc_rep_def by (auto del:iffI) (simp split:if_splits add:of_bool_def)
+qed simp
+
+subsection \<open>Kernel storage layout\<close>
+
+text \<open>Maximum number of procedures registered in the kernel:\<close>
+abbreviation "max_nprocs \<equiv> 2 ^ LENGTH(key) - 1 :: nat"
+
+typedef procedure_list = "{l :: (key, procedure) alist. size l \<le> max_nprocs}"
   morphisms proc_list_rep proc_list
   by (intro exI[of _ "Alist []"], simp)
 
 adhoc_overloading rep proc_list_rep
 
-record kernel =
-  kern_addr  :: eth_addr
-  curr_proc  :: eth_addr
-  entry_proc :: eth_addr
-  procs      :: procedure_list
+adhoc_overloading rep DAList.impl_of
 
-subsection \<open>Abbreviations\<close>
+record kernel =
+  curr_proc  :: ethereum_address
+  entry_proc :: ethereum_address
+  proc_list  :: procedure_list
 
 text \<open>
   Here we introduce some useful abbreviations that will simplify the expression of the kernel
@@ -1195,19 +1840,146 @@ text \<open>
 \<close>
 
 text \<open>Number of the procedures:\<close>
-abbreviation "nprocs \<sigma> \<equiv> size \<lfloor>procs \<sigma>\<rfloor>"
+abbreviation "nprocs \<sigma> \<equiv> size \<lfloor>proc_list \<sigma>\<rfloor>"
 
 text \<open>Set of procedure indexes:\<close>
-abbreviation "proc_ids \<sigma> \<equiv> {0..<nprocs \<sigma>}"
+definition "proc_ids \<sigma> \<equiv> {0..<nprocs \<sigma>}"
+
+abbreviation "procs \<sigma> \<equiv> DAList.lookup \<lfloor>proc_list \<sigma>\<rfloor>"
+
+definition "has_key k \<sigma> \<equiv> k \<in> dom (procs \<sigma>)"
 
 text \<open>Procedure by its key:\<close>
 
-abbreviation "proc \<sigma> k \<equiv> the (DAList.lookup \<lfloor>procs \<sigma>\<rfloor> k)"
+definition "proc \<sigma> k \<equiv> the (procs \<sigma> k)"
+
+abbreviation "proc_key \<sigma> i \<equiv> fst (\<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor> ! i)"
 
 text \<open>Index of procedure:\<close>
 
-text \<open>Maximum number of procedures registered in the kernel:\<close>
-abbreviation "max_nprocs \<equiv> 2 ^ LENGTH(key) - 1 :: nat"
+definition "proc_id \<sigma> k \<equiv> \<lceil>length (takeWhile ((\<noteq>) k \<circ> fst) \<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor>)\<rceil> :: key_index"
+
+lemma proc_id_alt[simp]:
+  "has_key k \<sigma> \<Longrightarrow> \<lfloor>proc_id \<sigma> k\<rfloor> \<in> proc_ids \<sigma>"
+  "has_key k \<sigma> \<Longrightarrow> \<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor> ! \<lfloor>proc_id \<sigma> k\<rfloor> = (k, proc \<sigma> k)"
+proof-
+  assume "has_key k \<sigma>"
+  hence 0:"(k, proc \<sigma> k) \<in> set \<lfloor>\<lfloor>kernel.proc_list \<sigma>\<rfloor>\<rfloor>"
+    unfolding has_key_def proc_def DAList.lookup_def
+    by auto
+  hence "length (takeWhile ((\<noteq>) k \<circ> fst) \<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor>) \<in> proc_ids \<sigma>"
+    unfolding has_key_def proc_id_def proc_ids_def
+    using length_takeWhile_less[of "\<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor> :: (key \<times> procedure) list" "(\<noteq>) k \<circ> fst"]
+    by force
+  moreover hence [simp]:"\<lfloor>\<lceil>length (takeWhile ((\<noteq>) k \<circ> fst) \<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor>)\<rceil> :: key_index\<rfloor> =
+                         length (takeWhile ((\<noteq>) k \<circ> fst) \<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor>)"
+    unfolding proc_ids_def
+    using key_index_inverse proc_list_rep[of "proc_list \<sigma>"]
+    by auto
+  ultimately show 1:"\<lfloor>proc_id \<sigma> k\<rfloor> \<in> proc_ids \<sigma>" unfolding proc_ids_def proc_id_def by simp
+
+  from 0 have "\<exists>! i. i < length \<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor> \<and> \<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor> ! i = (k, proc \<sigma> k)"
+    using distinct_map by (auto intro!:distinct_Ex1)
+  moreover
+  {
+    fix p i j
+    assume 0:"i < length \<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor>" and 1:"j < length \<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor>"
+    moreover assume "\<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor> ! i = (k, p)" and "fst (\<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor> ! j) = k"
+    ultimately have "snd (\<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor> ! j) = p"
+      using impl_of_distinct nth_mem distinct_map[of fst] unfolding inj_on_def
+      by (metis fst_conv snd_conv)
+  }
+  ultimately have "\<forall> i < length \<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor>.
+                     fst (\<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor> ! i) = k \<longrightarrow> snd (\<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor> ! i) = proc \<sigma> k"
+    by auto
+  with 1 show "\<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor> ! \<lfloor>proc_id \<sigma> k\<rfloor> = (k, proc \<sigma> k)"
+    unfolding proc_id_def proc_def proc_ids_def DAList.lookup_def
+    using nth_length_takeWhile[of "(\<noteq>) k \<circ> fst" "\<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor> :: (key \<times> procedure) list"]
+    by (auto intro:prod_eqI)
+qed
+
+definition "kernel_rep (\<sigma> :: kernel) r a \<equiv>
+  case \<lceil>a\<rceil> of
+    None              \<Rightarrow> r a
+  | Some addr         \<Rightarrow> (case addr of
+      Nprocs          \<Rightarrow> ucast (of_nat (nprocs \<sigma>) :: key) OR r a \<restriction> {LENGTH(key) ..<LENGTH(word32)}
+    | Proc_key i      \<Rightarrow> ucast (proc_key \<sigma> \<lfloor>i\<rfloor>) OR r a \<restriction> {LENGTH(key) ..<LENGTH(word32)}
+    | Kernel          \<Rightarrow> 0
+    | Curr_proc       \<Rightarrow> ucast (curr_proc \<sigma>) OR r a \<restriction> {LENGTH(ethereum_address) ..<LENGTH(word32)}
+    | Entry_proc      \<Rightarrow> ucast (entry_proc \<sigma>) OR r a \<restriction> {LENGTH(ethereum_address) ..<LENGTH(word32)}
+    | Heap_proc k off \<Rightarrow> if has_key k \<sigma>
+                         then proc_rep k (proc_id \<sigma> k) (proc \<sigma> k) r off
+                         else r a)"
+
+adhoc_overloading rep kernel_rep
+
+lemma proc_list_eqI[intro]:
+  assumes "nprocs \<sigma>\<^sub>1 = nprocs \<sigma>\<^sub>2"
+      and "\<And> i. i < nprocs \<sigma>\<^sub>1 \<Longrightarrow> proc_key \<sigma>\<^sub>1 i = proc_key \<sigma>\<^sub>2 i"
+      and "\<And> k. \<lbrakk>has_key k \<sigma>\<^sub>1; has_key k \<sigma>\<^sub>2\<rbrakk> \<Longrightarrow> proc \<sigma>\<^sub>1 k = proc \<sigma>\<^sub>2 k"
+    shows "proc_list \<sigma>\<^sub>1 = proc_list \<sigma>\<^sub>2"
+  unfolding has_key_def DAList.lookup_def proc_def
+proof-
+  from assms have "\<forall> i < nprocs \<sigma>\<^sub>1.
+                    snd (\<lfloor>\<lfloor>kernel.proc_list \<sigma>\<^sub>1\<rfloor>\<rfloor> ! i) = snd (\<lfloor>\<lfloor>kernel.proc_list \<sigma>\<^sub>2\<rfloor>\<rfloor> ! i)"
+    unfolding has_key_def DAList.lookup_def proc_def
+    apply (auto iff:fun_eq_iff)
+    using
+      Some_eq_map_of_iff[of "\<lfloor>\<lfloor>proc_list \<sigma>\<^sub>1\<rfloor>\<rfloor>"] Some_eq_map_of_iff[of "\<lfloor>\<lfloor>proc_list \<sigma>\<^sub>2\<rfloor>\<rfloor>"]
+      nth_mem[of _ "\<lfloor>\<lfloor>proc_list \<sigma>\<^sub>1\<rfloor>\<rfloor>"]          nth_mem[of _ "\<lfloor>\<lfloor>proc_list \<sigma>\<^sub>2\<rfloor>\<rfloor>"]
+      impl_of_distinct[of "\<lfloor>proc_list \<sigma>\<^sub>1\<rfloor>"]     impl_of_distinct[of "\<lfloor>proc_list \<sigma>\<^sub>2\<rfloor>"]
+    by (metis domIff option.sel option.simps(3) surjective_pairing)
+  with assms show ?thesis
+    by (auto intro!:nth_equalityI prod_eqI
+             iff:proc_list_rep_inject[symmetric] impl_of_inject[symmetric] fun_eq_iff)
+qed
+
+lemma kernel_rep_inj[simp]: "\<lfloor>\<sigma>\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>\<sigma>\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> \<sigma>\<^sub>1 = \<sigma>\<^sub>2" for \<sigma>\<^sub>1 \<sigma>\<^sub>2 :: kernel
+proof (rule kernel.equality)
+  assume "\<lfloor>\<sigma>\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>\<sigma>\<^sub>2\<rfloor> r\<^sub>2"
+  hence eq:"\<And> a. \<lfloor>\<sigma>\<^sub>1\<rfloor> r\<^sub>1 a = \<lfloor>\<sigma>\<^sub>2\<rfloor> r\<^sub>2 a" by simp
+
+  from eq[of "\<lfloor>Curr_proc\<rfloor>"] show "curr_proc \<sigma>\<^sub>1 = curr_proc \<sigma>\<^sub>2"
+    unfolding kernel_rep_def by auto
+
+  from eq[of "\<lfloor>Entry_proc\<rfloor>"] show "entry_proc \<sigma>\<^sub>1 = entry_proc \<sigma>\<^sub>2"
+    unfolding kernel_rep_def by auto
+
+  from eq[of "\<lfloor>Nprocs\<rfloor>"] have "nprocs \<sigma>\<^sub>1 = nprocs \<sigma>\<^sub>2"
+    unfolding kernel_rep_def
+    using proc_list_rep[of "proc_list \<sigma>\<^sub>1"] proc_list_rep[of "proc_list \<sigma>\<^sub>2"]
+    by (auto iff:of_nat_inj[symmetric])
+  moreover {
+    fix i
+    assume "i < nprocs \<sigma>\<^sub>1"
+    with eq[of "\<lfloor>Proc_key \<lceil>i\<rceil>\<rfloor>"] have "proc_key \<sigma>\<^sub>1 i = proc_key \<sigma>\<^sub>2 i"
+      unfolding kernel_rep_def
+      using proc_list_rep[of "proc_list \<sigma>\<^sub>1"]
+      by (auto simp add:key_index_inject simp add: key_index_inverse)
+  }
+  moreover {
+    fix k
+    assume "has_key k \<sigma>\<^sub>1" and " has_key k \<sigma>\<^sub>2"
+    with eq[of "\<lfloor>Heap_proc k _\<rfloor>"] have "proc \<sigma>\<^sub>1 k = proc \<sigma>\<^sub>2 k"
+      unfolding kernel_rep_def
+      by (auto iff:fun_eq_iff[symmetric])
+  }
+  ultimately show "proc_list \<sigma>\<^sub>1 = proc_list \<sigma>\<^sub>2" ..
+qed simp
+
+lemmas kernel_invertible[intro] = invertible2.intro[OF inj2I, OF kernel_rep_inj]
+
+interpretation kernel_inv: invertible2 kernel_rep ..
+
+adhoc_overloading abs kernel_inv.inv2
+
+lemma kernel_update_neq[simp]: "\<not> limited_and prefix_bound a \<Longrightarrow> \<lfloor>\<sigma>\<rfloor> r a = r a"
+proof-
+  assume "\<not> limited_and prefix_bound a"
+  hence "(\<lceil>a\<rceil> :: address option) = None"
+    using addr_prefix by - (rule ccontr, auto dest:addr_inv.inv_inj')
+  thus ?thesis unfolding kernel_rep_def by auto
+qed
 
 section \<open>Call formats\<close>
 
@@ -1221,6 +1993,8 @@ lemma cat_split[simp]: "map word_rcat (split x) = x"
 
 lemma split_inj[simp]: "split x = split y \<Longrightarrow> x = y"
   by (frule arg_cong[where f="map word_rcat"]) (subst (asm) cat_split)+
+
+subsection \<open>Deterministic inverse function\<close>
 
 definition "maybe_inv2_tf z f l \<equiv>
   if \<exists> n. takefill z n l \<in> range2 f
@@ -1244,12 +2018,17 @@ lemma takefill_prefix_inj:
   "\<lbrakk>\<And> x y. \<lbrakk>P x; P y; prefix x y\<rbrakk> \<Longrightarrow> x = y; P x; P y; x = takefill u n y\<rbrakk> \<Longrightarrow> x = y"
   by (elim takefill_implies_prefix) auto
 
+definition "inj2_tf f \<equiv> \<forall> x\<^sub>1 y\<^sub>1 x\<^sub>2 y\<^sub>2. prefix (f x\<^sub>1 y\<^sub>1) (f x\<^sub>2 y\<^sub>2) \<longrightarrow> x\<^sub>1 = x\<^sub>2"
+
+lemma inj2_tfI: "(\<And> x\<^sub>1 y\<^sub>1 x\<^sub>2 y\<^sub>2. prefix (f x\<^sub>1 y\<^sub>1) (f x\<^sub>2 y\<^sub>2) \<Longrightarrow> x\<^sub>1 = x\<^sub>2) \<Longrightarrow> inj2_tf f"
+  unfolding inj2_tf_def
+  by blast
+
 lemma exI2[intro]: "P x y \<Longrightarrow> \<exists> x y. P x y" by auto
 
-lemma maybe_inv2_tf_inj:
-  "\<lbrakk>\<And> x\<^sub>1 y\<^sub>1 x\<^sub>2 y\<^sub>2. prefix (f x\<^sub>1 y\<^sub>1) (f x\<^sub>2 y\<^sub>2) \<Longrightarrow> x\<^sub>1 = x\<^sub>2;
-    \<And> x y y'. length (f x y) = length (f x y')\<rbrakk> \<Longrightarrow> maybe_inv2_tf z f (f x y) = Some x"
-  unfolding maybe_inv2_tf_def range2_def the_inv2_def
+lemma maybe_inv2_tf_inj[intro]:
+  "\<lbrakk>inj2_tf f; \<And> x y y'. length (f x y) = length (f x y')\<rbrakk> \<Longrightarrow> maybe_inv2_tf z f (f x y) = Some x"
+  unfolding maybe_inv2_tf_def range2_def the_inv2_def inj2_tf_def
   apply (auto split:if_splits)
    apply (subst some1_equality[rotated], erule exI2)
      apply (metis length_takefill takefill_implies_prefix)
@@ -1257,14 +2036,103 @@ lemma maybe_inv2_tf_inj:
   by (meson takefill_same)
 
 lemma maybe_inv2_tf_inj':
-  "\<lbrakk>\<And> x\<^sub>1 y\<^sub>1 x\<^sub>2 y\<^sub>2. prefix (f x\<^sub>1 y\<^sub>1) (f x\<^sub>2 y\<^sub>2) \<Longrightarrow> x\<^sub>1 = x\<^sub>2;
-    \<And> x y y'. length (f x y) = length (f x y')\<rbrakk> \<Longrightarrow>
+  "\<lbrakk>inj2_tf f; \<And> x y y'. length (f x y) = length (f x y')\<rbrakk> \<Longrightarrow>
     maybe_inv2_tf z f v = Some x \<Longrightarrow> \<exists> y n. f x y = takefill z n v"
-  unfolding maybe_inv2_tf_def range2_def the_inv2_def
+  unfolding maybe_inv2_tf_def range2_def the_inv2_def inj2_tf_def
   apply (simp split:if_splits)
   apply (subst (asm) some1_equality[rotated], erule exI2)
    apply (metis length_takefill nat_less_le not_less take_prefix take_takefill)
   by (smt prefix_order.eq_iff the1_equality)
+
+locale invertible2_tf =
+  fixes rep :: "'a \<Rightarrow> 'b \<Rightarrow> 'c::zero list" ("\<lfloor>_\<rfloor>")
+  assumes inj:"inj2_tf rep"
+      and len_inv:"\<And> x y y'. length (rep x y) = length (rep x y')"
+begin
+definition inv2_tf :: "'c list \<Rightarrow> 'a option" where "inv2_tf \<equiv> maybe_inv2_tf 0 rep"
+
+lemmas inv2_tf_inj[folded inv2_tf_def, simp] = maybe_inv2_tf_inj[where z=0, OF inj len_inv]
+
+lemmas inv2_tf_inj'[folded inv2_tf_def, simp] = maybe_inv2_tf_inj'[where z=0, OF inj len_inv]
+end
+
+subsection \<open>Register system call\<close>
+
+definition "wf_cap c l \<equiv>
+  case (c, l) of
+    (Call,  [c])      \<Rightarrow> (\<lceil>c\<rceil> :: prefixed_capability option) \<noteq> None
+  | (Reg,   [c])      \<Rightarrow> (\<lceil>c\<rceil> :: prefixed_capability option) \<noteq> None
+  | (Del,   [c])      \<Rightarrow> (\<lceil>c\<rceil> :: prefixed_capability option) \<noteq> None
+  | (Entry, [])       \<Rightarrow> True
+  | (Write, [c1, c2]) \<Rightarrow> (\<lceil>(c1, c2)\<rceil> :: write_capability option) \<noteq> None
+  | (Log,   c)        \<Rightarrow> (\<lceil>c\<rceil> :: log_capability option) \<noteq> None
+  | (Send,  [c])      \<Rightarrow> (\<lceil>c\<rceil> :: external_call_capability option) \<noteq> None
+  | _                 \<Rightarrow> False"
+
+definition "overwrite_cap c l r \<equiv>
+  case (c, l) of
+    (Call,  [c])        \<Rightarrow> [\<lfloor>the \<lceil>c\<rceil> :: prefixed_capability\<rfloor> (r ! 0)]
+  | (Reg,   [c])        \<Rightarrow> [\<lfloor>the \<lceil>c\<rceil> :: prefixed_capability\<rfloor> (r ! 0)]
+  | (Del,   [c])        \<Rightarrow> [\<lfloor>the \<lceil>c\<rceil> :: prefixed_capability\<rfloor> (r ! 0)]
+  | (Entry, [])         \<Rightarrow> []
+  | (Write, [c1, c2])   \<Rightarrow> let (c1, c2) = \<lfloor>the \<lceil>(c1, c2)\<rceil> :: write_capability\<rfloor> in [c1, c2]
+                           \<comment> \<open>for mere consistency, no actual need in this,
+                               can be just [c1, c2]\<close>
+  | (Log,   c)          \<Rightarrow> \<lfloor>the \<lceil>c\<rceil> :: log_capability\<rfloor>
+  | (Send,  [c])        \<Rightarrow> [\<lfloor>the \<lceil>c\<rceil> :: external_call_capability\<rfloor> (r ! 0)]"
+
+typedef capability_data =
+  "{ l :: ((capability \<times> capability_index) \<times> word32 list) list.
+       \<forall> ((c, _), l) \<in> set l. wf_cap c l }"
+  morphisms cap_data_rep cap_data
+  by (intro exI[of _ "[]"], simp)
+
+adhoc_overloading rep cap_data_rep
+
+record reg_call =
+  proc_key :: key
+  eth_addr :: ethereum_address
+  cap_data :: capability_data
+
+no_adhoc_overloading rep cap_index_rep
+
+no_adhoc_overloading abs cap_index_inv.inv
+
+definition "cap_index_rep0 i \<equiv> of_nat \<lfloor>i\<rfloor> :: byte" for i :: capability_index
+
+adhoc_overloading rep cap_index_rep0
+
+lemma width_cap_index0: "width \<lfloor>i\<rfloor> \<le> LENGTH(byte)" for i :: capability_index by simp
+
+lemma width_cap_index0'[simp]: "LENGTH(byte) \<le> n \<Longrightarrow> width \<lfloor>i\<rfloor> \<le> n"
+  for i :: capability_index by simp
+
+lemma cap_index_inj0[simp]: "(\<lfloor>i\<^sub>1\<rfloor> :: byte) = \<lfloor>i\<^sub>2\<rfloor> \<Longrightarrow> i\<^sub>1 = i\<^sub>2" for i\<^sub>1 i\<^sub>2 :: capability_index
+  unfolding cap_index_rep0_def
+  using cap_index_rep'[of i\<^sub>1] cap_index_rep'[of i\<^sub>2] word_of_nat_inj[of "\<lfloor>i\<^sub>1\<rfloor>" "\<lfloor>i\<^sub>2\<rfloor>"]
+        cap_index_rep'_inject
+  by force
+
+lemmas cap_index0_invertible[intro] = invertible.intro[OF injI, OF cap_index_inj0]
+
+interpretation cap_index_inv0: invertible cap_index_rep0 ..
+
+adhoc_overloading abs cap_index_inv0.inv
+
+definition "reg_call_rep d r \<equiv>
+    [ucast (proc_key d) OR (r ! 0) \<restriction> {LENGTH(key) ..<LENGTH(word32)},
+     ucast (eth_addr d) OR (r ! 1) \<restriction> {LENGTH(key) ..<LENGTH(word32)}] @
+     snd
+      (fold
+        (\<lambda> ((c, i), l) (j, d).
+          (j + 3 + length l,
+           d @
+           [ucast (of_nat (3 + length l) :: byte) OR (r ! j) \<restriction> {LENGTH(byte) ..<LENGTH(word32)},
+            ucast \<lfloor>c\<rfloor> OR (r ! (j + 1)) \<restriction> {LENGTH(byte) ..<LENGTH(word32)},
+            ucast \<lfloor>i\<rfloor> OR (r ! (j + 2)) \<restriction> {LENGTH(byte) ..<LENGTH(word32)}]
+           @ overwrite_cap c l (drop (j + 3) r)))
+        \<lfloor>cap_data d\<rfloor>
+        (2, []))"
 
 datatype result =
     Success storage
@@ -1323,7 +2191,7 @@ definition execute :: "byte list \<Rightarrow> storage \<Rightarrow> result \<ti
        | Entry       \<Rightarrow> set_entry ci c s
        | Write       \<Rightarrow> write_addr ci c s
        | Log         \<Rightarrow> log ci c s
-       | Gas         \<Rightarrow> external ci c s)))"
+       | Send        \<Rightarrow> external ci c s)))"
 
 (*
 text \<open>Storage key that corresponds to the number of procedures in the list:\<close>
