@@ -8,7 +8,7 @@ Warning: this is work in progress, so everything is subject to change.
 
 To manually build a pdf or html versions of the theory you need to install the following prerequisites:
 
-* Isabelle2018
+* Isabelle2019
 * pdflatex
 * make
 
@@ -34,4 +34,3 @@ $ make html
 ```
 
 Generated HTML files will be created in a separate directory, the path to which will be printed on the screen.
-
