@@ -5,6 +5,7 @@ imports
   "HOL-Word.Word"
   "HOL-Library.Adhoc_Overloading"
   "HOL-Library.DAList"
+  "HOL-Library.Rewrite"
   "Word_Lib/Word_Lemmas"
 begin
 
@@ -62,7 +63,7 @@ lemma widthI[intro]: "\<lbrakk>\<And> u. u < n \<Longrightarrow> 2 ^ u \<le> una
   apply (intro the_equality, blast)
   by (meson nat_less_le)
 
-lemma width_wf[simp]: "\<exists>! n. (\<forall> u < n. 2 ^ u \<le> unat w) \<and> unat w < 2 ^ n"
+lemma width_wf: "\<exists>! n. (\<forall> u < n. 2 ^ u \<le> unat w) \<and> unat w < 2 ^ n"
   (is "?Ex1 (unat w)")
 proof (induction ("unat w"))
   case 0
@@ -382,6 +383,12 @@ proof-
   with inj show ?thesis .
 qed
 
+lemma restrict_ucast_inv[simp]:
+  "\<lbrakk>a = LENGTH('a); b = LENGTH('b)\<rbrakk> \<Longrightarrow> (ucast x OR y \<restriction> {a..<b}) AND mask a = ucast x"
+  for x :: "'a::len word" and y :: "'b::len word"
+  unfolding word_eq_iff
+  by (rewrite nth_ucast word_ao_nth nth_mask nth_restrict test_bit_bin)+ auto
+
 lemmas restrict_inj_pad_join[dest] = restrict_inj2[of "\<lambda> x y. x \<^sub>_\<diamond>\<^sub>_ y"]
 
 subsection \<open>Plain concatenation\<close>
@@ -621,7 +628,7 @@ definition inv :: "'b \<Rightarrow> 'a option" where "inv \<equiv> maybe_inv rep
 
 lemmas inv_inj[folded inv_def, simp] = maybe_inv_inj[OF inj]
 
-lemmas inv_inj'[folded inv_def, simp] = maybe_inv_inj'[OF inj]
+lemmas inv_inj'[folded inv_def, dest] = maybe_inv_inj'[OF inj]
 end
 
 definition "range2 f \<equiv> {y. \<exists>x\<^sub>1 \<in> UNIV. \<exists> x\<^sub>2 \<in> UNIV. y = f x\<^sub>1 x\<^sub>2}"
@@ -652,7 +659,7 @@ definition inv2 :: "'c \<Rightarrow> 'a option" where "inv2 \<equiv> maybe_inv2 
 
 lemmas inv2_inj[folded inv2_def, simp] = maybe_inv2_inj[OF inj]
 
-lemmas inv2_inj'[folded inv_def, simp] = maybe_inv2_inj'[OF inj]
+lemmas inv2_inj'[folded inv_def, dest] = maybe_inv2_inj'[OF inj]
 end
 
 subsubsection \<open>Capability\<close>
@@ -676,10 +683,10 @@ datatype capability =
   | Send
 
 text \<open>
-  Capability representation would be its assigned number.
-
   In general, in the following we strive to make all encoding functions injective without any
   preconditions. All the necessary invariants are built into the type definitions.
+
+  Capability representation would be its assigned number.
 \<close>
 
 definition cap_type_rep :: "capability \<Rightarrow> byte" where
@@ -704,7 +711,7 @@ lemma cap_type_rep_rng[simp]: "\<lfloor>c\<rfloor> \<in> {0x03..0x09}" for c :: 
 
 text \<open>Capability representation is injective.\<close>
 
-lemma cap_type_rep_inj[simp]: "\<lfloor>c\<^sub>1\<rfloor> = \<lfloor>c\<^sub>2\<rfloor> \<Longrightarrow> c\<^sub>1 = c\<^sub>2" for c\<^sub>1 c\<^sub>2 :: capability
+lemma cap_type_rep_inj[dest]: "\<lfloor>c\<^sub>1\<rfloor> = \<lfloor>c\<^sub>2\<rfloor> \<Longrightarrow> c\<^sub>1 = c\<^sub>2" for c\<^sub>1 c\<^sub>2 :: capability
   unfolding cap_type_rep_def
   by (simp split:capability.splits)
 
@@ -766,11 +773,13 @@ lemma cap_index_nonzero[simp]: "\<lfloor>i\<rfloor> \<noteq> 0x00" for i :: capa
 
 text \<open>Capability index representation is injective.\<close>
 
-lemma cap_index_inj[simp]: "(\<lfloor>i\<^sub>1\<rfloor> :: byte) = \<lfloor>i\<^sub>2\<rfloor> \<Longrightarrow> i\<^sub>1 = i\<^sub>2" for i\<^sub>1 i\<^sub>2 :: capability_index
+lemma cap_index_inj[dest]: "(\<lfloor>i\<^sub>1\<rfloor> :: byte) = \<lfloor>i\<^sub>2\<rfloor> \<Longrightarrow> i\<^sub>1 = i\<^sub>2" for i\<^sub>1 i\<^sub>2 :: capability_index
   unfolding cap_index_rep_def
   using cap_index_rep'[of i\<^sub>1] cap_index_rep'[of i\<^sub>2] word_of_nat_inj[of "\<lfloor>i\<^sub>1\<rfloor>" "\<lfloor>i\<^sub>2\<rfloor>"]
         cap_index_rep'_inject
   by force
+
+text \<open>Representation function is invertible.\<close>
 
 lemmas cap_index_invertible[intro] = invertible.intro[OF injI, OF cap_index_inj]
 
@@ -814,7 +823,7 @@ adhoc_overloading rep data_offset_rep
 
 text \<open>Data offset representation is injective.\<close>
 
-lemma data_offset_inj[simp]:
+lemma data_offset_inj[dest]:
   "\<lfloor>d\<^sub>1\<rfloor> = \<lfloor>d\<^sub>2\<rfloor> \<Longrightarrow> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: data_offset
   unfolding data_offset_rep_def
   by (auto split:data_offset.splits)
@@ -852,17 +861,25 @@ datatype address =
   | Curr_proc
   | Entry_proc
 
+text \<open>Low-level representation of a procedure index is a machine word that starts from @{text 1}.\<close>
+
 definition "key_index_rep i \<equiv> of_nat (\<lfloor>i\<rfloor> + 1) :: key" for i :: key_index
 
 adhoc_overloading rep key_index_rep
+
+text \<open>Proof that low-level representation can't be @{text 0}.\<close>
 
 lemma key_index_nonzero[simp]: "\<lfloor>i\<rfloor> \<noteq> (0 :: key)" for i :: key_index
   unfolding key_index_rep_def using key_index_rep'[of i]
   by (intro of_nat_neq_0, simp_all)
 
-lemma key_index_inj[simp]: "(\<lfloor>i\<^sub>1\<rfloor> :: key) = \<lfloor>i\<^sub>2\<rfloor> \<Longrightarrow> i\<^sub>1 = i\<^sub>2" for i :: key_index
+text \<open>Low-level representation is injective.\<close>
+
+lemma key_index_inj[dest]: "(\<lfloor>i\<^sub>1\<rfloor> :: key) = \<lfloor>i\<^sub>2\<rfloor> \<Longrightarrow> i\<^sub>1 = i\<^sub>2" for i :: key_index
   unfolding key_index_rep_def using key_index_rep'[of i\<^sub>1] key_index_rep'[of i\<^sub>2]
   by (simp add:key_index_rep'_inject of_nat_inj)
+
+text \<open>Address prefix for all addresses that belong to the kernel storage.\<close>
 
 abbreviation "kern_prefix \<equiv> 0xffffffff"
 
@@ -892,9 +909,11 @@ adhoc_overloading rep addr_rep
 
 text \<open>Kernel storage address representation is injective.\<close>
 
-lemma addr_inj[simp]: "\<lfloor>a\<^sub>1\<rfloor> = \<lfloor>a\<^sub>2\<rfloor> \<Longrightarrow> a\<^sub>1 = a\<^sub>2" for a\<^sub>1 a\<^sub>2 :: address
+lemma addr_inj[dest]: "\<lfloor>a\<^sub>1\<rfloor> = \<lfloor>a\<^sub>2\<rfloor> \<Longrightarrow> a\<^sub>1 = a\<^sub>2" for a\<^sub>1 a\<^sub>2 :: address
   unfolding addr_rep_def
   by (split address.splits) (force split:address.splits)+
+
+text \<open>Representation function is invertible.\<close>
 
 lemmas addr_invertible[intro] = invertible.intro[OF injI, OF addr_inj]
 
@@ -902,12 +921,16 @@ interpretation addr_inv: invertible addr_rep ..
 
 adhoc_overloading abs addr_inv.inv
 
+text \<open>Lowest address of the kernel storage (0xffffffff0000...).\<close>
+
 abbreviation "prefix_bound \<equiv> rpad (size kern_prefix) (ucast kern_prefix :: word32)"
 
 lemma prefix_bound: "unat prefix_bound < 2 ^ LENGTH(word32)" unfolding rpad_def by simp
 
 lemma prefix_bound'[simplified, simp]: "x \<le> unat prefix_bound \<Longrightarrow> x < 2 ^ LENGTH(word32)"
   using prefix_bound by simp
+
+text \<open>All addresses in the kernel storage are indeed start with the kernel prefix (0xffffffff).\<close>
 
 lemma addr_prefix[simp, intro]: "limited_and prefix_bound \<lfloor>a\<rfloor>" for a :: address
   unfolding limited_and_def addr_rep_def
@@ -917,14 +940,14 @@ subsection \<open>Capability formats\<close>
 
 text \<open>
   We define capability format generally as a @{text locale}. It has two parameters: first one is a
-  @{text "subset"} function (denoted as @{text "\<subseteq>\<^sub>c"}), and second one is a @{text "set_of"} function, which maps
-  a capability to its high-level representation that is expressed as a set.
+  @{text "subset"} function (denoted as @{text "\<subseteq>\<^sub>c"}), and second one is a @{text "set_of"} function,
+  which maps a capability to its high-level representation that is expressed as a set.
   We have an assumption that  @{text "Capability A"} is a subset of @{text "Capability B"} if and
   only if their high-level representations are also subsets of each other.
   We call it the well-definedness assumption (denoted as wd) and using it we can prove abstractly
   that such generic capability format satisfies the properties of reflexivity and transitivity.
 
-  Then sing this locale we can prove that capability formats of all available system calls
+  Then using this locale we can prove that capability formats of all available system calls
   satisfy the properties of reflexivity and transitivity simply by formalizing corresponding
   @{text "subset"} and @{text "set_of"} functions and then proving the well-definedness assumption.
   This process is called locale interpretation.
@@ -971,9 +994,14 @@ adhoc_overloading rep prefix_size_rep
 
 text \<open>Prefix representation is injective.\<close>
 
-lemma prefix_size_inj[simp]: "(\<lfloor>s\<^sub>1\<rfloor> :: byte) = \<lfloor>s\<^sub>2\<rfloor> \<Longrightarrow> s\<^sub>1 = s\<^sub>2" for s\<^sub>1 s\<^sub>2 :: prefix_size
+lemma prefix_size_inj[dest]: "(\<lfloor>s\<^sub>1\<rfloor> :: byte) = \<lfloor>s\<^sub>2\<rfloor> \<Longrightarrow> s\<^sub>1 = s\<^sub>2" for s\<^sub>1 s\<^sub>2 :: prefix_size
   unfolding prefix_size_rep_def using prefix_size_rep'[of s\<^sub>1] prefix_size_rep'[of s\<^sub>2]
   by (simp add:prefix_size_rep'_inject of_nat_inj)
+
+text \<open>
+  Any number that is greater or equal to a maximum length of a procedure key is greater or equal
+  to any procedure index.
+\<close>
 
 lemma prefix_size_rep_less[simp]: "LENGTH(key) \<le> n \<Longrightarrow> \<lfloor>s\<rfloor> \<le> (n :: nat)" for s :: prefix_size
   using prefix_size_rep'[of s] by simp
@@ -1012,6 +1040,12 @@ definition "pref_cap_sub A B \<equiv>
   for A B :: prefixed_capability
 
 adhoc_overloading sub pref_cap_sub
+
+text \<open>
+  Auxiliary lemma: if first @{text n} elements of lists @{text a} and @{text b} are equal, and the
+  number @{text i} is smaller than @{text n}, then the @{text ith} elements of both lists are
+  also equal.
+\<close>
 
 lemma nth_take_i[dest]: "\<lbrakk>take n a = take n b; i < n\<rbrakk> \<Longrightarrow> a ! i = b ! i"
   by (metis nth_take)
@@ -1094,7 +1128,7 @@ adhoc_overloading rep pref_cap_rep
 
 text \<open>Low-level representation is injective.\<close>
 
-lemma pref_cap_rep_inj_helper_inj[simp]: "\<lfloor>s\<^sub>1\<rfloor> \<^sub>1\<diamond> k\<^sub>1 = \<lfloor>s\<^sub>2\<rfloor> \<^sub>1\<diamond> k\<^sub>2 \<Longrightarrow> s\<^sub>1 = s\<^sub>2 \<and> k\<^sub>1 = k\<^sub>2"
+lemma pref_cap_rep_inj_helper_inj[dest]: "\<lfloor>s\<^sub>1\<rfloor> \<^sub>1\<diamond> k\<^sub>1 = \<lfloor>s\<^sub>2\<rfloor> \<^sub>1\<diamond> k\<^sub>2 \<Longrightarrow> s\<^sub>1 = s\<^sub>2 \<and> k\<^sub>1 = k\<^sub>2"
   for s\<^sub>1 s\<^sub>2 :: prefix_size and k\<^sub>1 k\<^sub>2 :: key
   by auto
 
@@ -1103,9 +1137,11 @@ lemma pref_cap_rep_inj_helper_zero[simplified, simp]:
   for s :: prefix_size and k :: key
   by simp
 
-lemma pref_cap_rep_inj[simp]: "\<lfloor>c\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>c\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> c\<^sub>1 = c\<^sub>2" for c\<^sub>1 c\<^sub>2 :: prefixed_capability
+lemma pref_cap_rep_inj[dest]: "\<lfloor>c\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>c\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> c\<^sub>1 = c\<^sub>2" for c\<^sub>1 c\<^sub>2 :: prefixed_capability
   unfolding pref_cap_rep_def
   by (auto split:prod.splits)
+
+text \<open>Representation function is invertible.\<close>
 
 lemmas pref_cap_invertible[intro] = invertible2.intro[OF inj2I, OF pref_cap_rep_inj]
 
@@ -1159,6 +1195,11 @@ lemma write_cap_no_overflow'[simp]: "\<lfloor>w\<rfloor> = (a, b) \<Longrightarr
   for w :: write_capability
   using write_cap_no_overflow[of w] by simp
 
+text \<open>
+  Auxiliary lemma: the @{text ith} element of the kernel address prefix is binary @{text 1} if and
+  only if @{text i} is smaller then the size of the prefix, otherwise it is @{text 0}.
+\<close>
+
 lemma nth_kern_prefix: "kern_prefix !! i = (i < size kern_prefix)"
 proof-
   fix i
@@ -1173,6 +1214,11 @@ proof-
   moreover have "i \<ge> size kern_prefix \<Longrightarrow> \<not> kern_prefix !! i" by simp
   ultimately show "kern_prefix !! i = (i < size kern_prefix)" by auto
 qed
+
+text \<open>
+  The @{text ith} bit of the lowest kernel address is @{text 1} if and only if @{text i} is smaller
+  or equal to the size of the kernel prefix, otherwise it is @{text 0}.
+\<close>
 
 lemma nth_prefix_bound[iff]:
   "prefix_bound !! i = (i \<in> {LENGTH(word32) - size (kern_prefix)..<LENGTH(word32)})"
@@ -1191,6 +1237,8 @@ proof-
       test_bit_size[of prefix_bound i, simplified]
   by (simp (no_asm_simp)) linarith
 qed
+
+text \<open>Addresses from write capabilities can not contain the prefix of the kernel storage.\<close>
 
 lemma write_cap_high[dest]:
   "unat a < unat prefix_bound \<Longrightarrow>
@@ -1273,18 +1321,25 @@ adhoc_overloading rep write_cap_rep
 
 text \<open>Low-level representation is injective.\<close>
 
-lemma write_cap_inj[simp]: "(\<lfloor>w\<^sub>1\<rfloor> :: word32 \<times> word32) = \<lfloor>w\<^sub>2\<rfloor> \<Longrightarrow> w\<^sub>1 = w\<^sub>2"
+lemma write_cap_inj[dest]: "(\<lfloor>w\<^sub>1\<rfloor> :: word32 \<times> word32) = \<lfloor>w\<^sub>2\<rfloor> \<Longrightarrow> w\<^sub>1 = w\<^sub>2"
   for w\<^sub>1 w\<^sub>2 :: write_capability
   unfolding write_cap_rep_def
   by (auto
       split:prod.splits iff:write_cap_rep'_inject[symmetric]
       intro!:word_of_nat_inj simp add:rpad_def)
 
+text \<open>Representation function is invertible.\<close>
+
 lemmas write_cap_invertible[intro] = invertible.intro[OF injI, OF write_cap_inj]
 
 interpretation write_cap_inv: invertible write_cap_rep ..
 
 adhoc_overloading abs write_cap_inv.inv
+
+text \<open>
+  An address from the high-level representation of the write capability must be below the lowest
+  kernel storage address.
+\<close>
 
 lemma write_cap_prefix[dest]: "a \<in> \<lceil>w\<rceil> \<Longrightarrow> \<not> limited_and prefix_bound a" for w :: write_capability
 proof
@@ -1300,6 +1355,11 @@ proof
     unfolding limited_and_def word_eq_iff
     by (subst (asm) nth_prefix_bound, auto)
 qed
+
+text \<open>
+  An address from the high-level representation is different from any address from the kernel
+  storage.
+\<close>
 
 lemma write_cap_safe[simp]: "a \<in> \<lceil>w\<rceil> \<Longrightarrow> a \<noteq> \<lfloor>a'\<rfloor>" for w :: write_capability and a' :: address
   by auto
@@ -1391,14 +1451,21 @@ adhoc_overloading rep log_cap_rep
 
 text \<open>Low-level representation is injective.\<close>
 
-lemma log_cap_rep_inj[simp]: "(\<lfloor>l\<^sub>1\<rfloor> :: word32 list) = \<lfloor>l\<^sub>2\<rfloor> \<Longrightarrow> l\<^sub>1 = l\<^sub>2" for l\<^sub>1 l\<^sub>2 :: log_capability
+lemma log_cap_rep_inj[dest]: "(\<lfloor>l\<^sub>1\<rfloor> :: word32 list) = \<lfloor>l\<^sub>2\<rfloor> \<Longrightarrow> l\<^sub>1 = l\<^sub>2" for l\<^sub>1 l\<^sub>2 :: log_capability
   unfolding log_cap_rep_def using log_cap_rep'_inject by auto
+
+text \<open>Representation function is invertible.\<close>
 
 lemmas log_cap_rep_invertible[intro] = invertible.intro[OF injI, OF log_cap_rep_inj]
 
 interpretation log_cap_inv: invertible log_cap_rep ..
 
 adhoc_overloading abs log_cap_inv.inv
+
+text \<open>
+  Length of a low-level representation is correct: it is the length of the topics list plus 1 for
+  storing the number of topics.
+\<close>
 
 lemma log_cap_rep_length[simp]: "length \<lfloor>l\<rfloor> = length (log_cap_rep' l) + 1"
   unfolding log_cap_rep_def by simp
@@ -1409,7 +1476,7 @@ text \<open>
   We model the external call capability format using a record with two fields: @{text "allow_addr"}
   and @{text "may_send"}, with the following semantic:
   \begin{itemize}
-    \item if the field  @{text "allow_addr"} has value, then only the Ethereum  address specified
+    \item if the field  @{text "allow_addr"} has value, then only the Ethereum address specified
           by it can be called, otherwise any address can be called. This models the @{text CallAny}
           flag and the @{text EthAddress} together;
     \item if the value of the field  @{text "may_send"} is true, the any quantity of Ether can be
@@ -1424,7 +1491,7 @@ record external_call_capability =
   may_send   :: bool
 
 text \<open>
-  High-level representation of a external call capability is a set of all possible pairs of account
+  High-level representation of an external call capability is a set of all possible pairs of account
   addresses and Ether amount that can be sent using this capability.
 \<close>
 
@@ -1432,6 +1499,20 @@ definition "set_of_ext_cap e \<equiv>
   {(a, v) . case_option True ((=) a) (allow_addr e) \<and> (\<not> may_send e \<longrightarrow> v = (0 :: word32)) }"
 
 adhoc_overloading abs set_of_ext_cap
+
+text \<open>
+  Auxiliary abbreviation: @{text "allow_any e"} returns @{text True} if the field @{text allow_addr}
+  of the capability @{text e} does not contain any value, and @{text False} otherwise.
+\<close>
+
+abbreviation "allow_any e \<equiv> Option.is_none (allow_addr e)"
+
+text \<open>
+  Auxiliary abbreviation: @{text "the_addr e"} returns the value of the field @{text allow_addr}
+  of the capability @{text e}. It can be used only if @{text "allow_any e"} is @{text False}.
+\<close>
+
+abbreviation "the_addr e \<equiv> the (allow_addr e)"
 
 text \<open>
   An external call capability A is a subset of an external call capability B if and only if:
@@ -1442,10 +1523,6 @@ text \<open>
     \item if A may send Ether, then B also must be able to send Ether.
   \end{itemize}
 \<close>
-
-abbreviation "allow_any e \<equiv> Option.is_none (allow_addr e)"
-
-abbreviation "the_addr e \<equiv> the (allow_addr e)"
 
 definition "ext_cap_sub A B \<equiv>
     (allow_any A \<longrightarrow> allow_any B)
@@ -1522,7 +1599,7 @@ lemma ext_cap_rep_helper_zero[simp]: "n \<in> ext_cap_frame e \<Longrightarrow> 
   unfolding ext_cap_frame_def ext_cap_val_def
   by (auto simp del:of_bl_True split:option.split)
 
-lemma ext_cap_rep_inj[simp]: "\<lfloor>e\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>e\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> e\<^sub>1 = e\<^sub>2" for e\<^sub>1 e\<^sub>2 :: external_call_capability
+lemma ext_cap_rep_inj[dest]: "\<lfloor>e\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>e\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> e\<^sub>1 = e\<^sub>2" for e\<^sub>1 e\<^sub>2 :: external_call_capability
 proof (erule rev_mp; cases "allow_any e\<^sub>1"; cases "allow_any e\<^sub>2")
   let ?goal = "\<lfloor>e\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>e\<^sub>2\<rfloor> r\<^sub>2 \<longrightarrow> e\<^sub>1 = e\<^sub>2"
   {
@@ -1565,6 +1642,8 @@ proof (erule rev_mp; cases "allow_any e\<^sub>1"; cases "allow_any e\<^sub>2")
   }
 qed
 
+text \<open>Representation function is invertible.\<close>
+
 lemmas ext_cap_invertible[intro] = invertible2.intro[OF inj2I, OF ext_cap_rep_inj]
 
 interpretation ext_cap_inv: invertible2 ext_cap_rep ..
@@ -1573,13 +1652,30 @@ adhoc_overloading abs ext_cap_inv.inv2
 
 section \<open>Kernel state\<close>
 
+text \<open>This section contains definition of the kernel state.\<close>
+
 subsection \<open>Procedure data\<close>
+
+text \<open>
+  Introduce @{text "'a capability_list"} type that is a list of capabilities of a specific type
+  @{text "'a"}, whose length is smaller than 255.
+\<close>
 
 typedef 'a capability_list = "{l :: 'a list. length l < 2 ^ LENGTH(byte) - 1}"
   morphisms cap_list_rep cap_list
   by (intro exI[of _ "[]"], simp)
 
 adhoc_overloading rep cap_list_rep
+
+text \<open>
+  We model a procedure using a record with the following fields:
+  \begin{itemize}
+    \item @{text eth_addr} field stores the Ethereum address of the procedure;
+    \item @{text entry_cap} field is @{text True} if the procedure is the entry procedure, and
+          @{text False} otherwise;
+    \item other fields are lists of capabilities of corresponding types assigned to the procedure.
+  \end{itemize}
+\<close>
 
 record procedure =
   eth_addr   :: ethereum_address
@@ -1594,6 +1690,12 @@ record procedure =
 lemmas alist_simps = size_alist_def alist.Alist_inverse alist.impl_of_inverse
 
 declare alist_simps[simp]
+
+text \<open>
+  Low-level representation of the capability as it is stored in the kernel storage: given the
+  procedure, the capability type, index and offset, it checks that all parameters are valid and
+  correct and returns the machine word representation of the capability.
+\<close>
 
 definition "caps_rep (k :: key) p r ty (i :: capability_index) (off :: capability_offset) \<equiv>
   let addr = \<lfloor>Heap_proc k (Cap ty i off)\<rfloor> in
@@ -1624,6 +1726,8 @@ definition "caps_rep (k :: key) p r ty (i :: capability_index) (off :: capabilit
              then \<lfloor>\<lfloor>ext_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rfloor> (r addr)
              else r addr"
 
+text \<open>Capability representation is injective.\<close>
+
 lemma caps_rep_inj[dest]:
   assumes "caps_rep k\<^sub>1 p\<^sub>1 r\<^sub>1 = caps_rep k\<^sub>2 p\<^sub>2 r\<^sub>2"
   shows   "length \<lfloor>call_caps p\<^sub>1\<rfloor> = length \<lfloor>call_caps p\<^sub>2\<rfloor>   \<Longrightarrow> call_caps p\<^sub>1 = call_caps p\<^sub>2"
@@ -1642,7 +1746,7 @@ proof-
     and ?addr\<^sub>2 = "\<lfloor>Heap_proc k\<^sub>2 (Cap Call \<lceil>i\<rceil> 0)\<rfloor>"
     assume idx:"i < length \<lfloor>call_caps p\<^sub>1\<rfloor>"
     hence 0:"i \<in>  {i. i < 2 ^ LENGTH(8 word) - 1}"
-      using capability_list.cap_list_rep[of "call_caps p\<^sub>1"] by simp
+      using cap_list_rep[of "call_caps p\<^sub>1"] by simp
     assume "length \<lfloor>call_caps p\<^sub>1\<rfloor> = length \<lfloor>call_caps p\<^sub>2\<rfloor>"
     with idx eq[of Call "\<lceil>i\<rceil>" 0]
     have "\<lfloor>\<lfloor>call_caps p\<^sub>1\<rfloor> ! i\<rfloor> (r\<^sub>1 ?addr\<^sub>1) = \<lfloor>\<lfloor>call_caps p\<^sub>2\<rfloor> ! i\<rfloor> (r\<^sub>2 ?addr\<^sub>2)"
@@ -1672,7 +1776,7 @@ proof-
     and ?addr\<^sub>2 = "\<lfloor>Heap_proc k\<^sub>2 (Cap Del \<lceil>i\<rceil> 0)\<rfloor>"
     assume idx:"i < length \<lfloor>del_caps p\<^sub>1\<rfloor>"
     hence 0:"i \<in>  {i. i < 2 ^ LENGTH(8 word) - 1}"
-      using capability_list.cap_list_rep[of "del_caps p\<^sub>1"] by simp
+      using cap_list_rep[of "del_caps p\<^sub>1"] by simp
     assume "length \<lfloor>del_caps p\<^sub>1\<rfloor> = length \<lfloor>del_caps p\<^sub>2\<rfloor>"
     with idx eq[of Del "\<lceil>i\<rceil>" 0]
     have "\<lfloor>\<lfloor>del_caps p\<^sub>1\<rfloor> ! i\<rfloor> (r\<^sub>1 ?addr\<^sub>1) = \<lfloor>\<lfloor>del_caps p\<^sub>2\<rfloor> ! i\<rfloor> (r\<^sub>2 ?addr\<^sub>2)"
@@ -1745,6 +1849,12 @@ proof-
     by force
 qed
 
+text \<open>
+  Low-level representation of the procedure as it is stored in the kernel storage: given the
+  procedure and the data offset it returns the machine word representation of the data
+  that can be found by that offset.
+\<close>
+
 definition "proc_rep k (i :: key_index) (p :: procedure) r (off :: data_offset) \<equiv>
   let addr = \<lfloor>off\<rfloor> in
   let ncaps = \<lambda> n. ucast (of_nat n :: byte) OR r addr \<restriction> {LENGTH(byte)..<LENGTH(word32)} in
@@ -1759,6 +1869,8 @@ definition "proc_rep k (i :: key_index) (p :: procedure) r (off :: data_offset) 
   | Ncaps Log    \<Rightarrow> ncaps (length \<lfloor>log_caps p\<rfloor>)
   | Ncaps Send   \<Rightarrow> ncaps (length \<lfloor>ext_caps p\<rfloor>)
   | Cap ty i off \<Rightarrow> caps_rep k p r ty i off"
+
+text \<open>Low-level representation is injective.\<close>
 
 lemma restrict_ucast_inj[simplified, dest!]:
   "\<lbrakk>ucast x\<^sub>1 OR y\<^sub>1 \<restriction> {l ..<LENGTH(word32)} = ucast x\<^sub>2 OR y\<^sub>2 \<restriction> {l ..<LENGTH(word32)};
@@ -1818,8 +1930,15 @@ qed simp
 
 subsection \<open>Kernel storage layout\<close>
 
-text \<open>Maximum number of procedures registered in the kernel:\<close>
+text \<open>Maximum number of procedures registered in the kernel is @{text "2\<^sup>1\<^sup>9\<^sup>2 - 1"}.\<close>
+
 abbreviation "max_nprocs \<equiv> 2 ^ LENGTH(key) - 1 :: nat"
+
+text \<open>
+  Introduce @{text procedure_list} type that is an association list of elements (a list in which
+  each list element comprises a key and a value, and all keys are distinct), where element key is
+  a procedure key and element value is a procedure itself.
+\<close>
 
 typedef procedure_list = "{l :: (key, procedure) alist. size l \<le> max_nprocs}"
   morphisms proc_list_rep proc_list
@@ -1828,6 +1947,15 @@ typedef procedure_list = "{l :: (key, procedure) alist. size l \<le> max_nprocs}
 adhoc_overloading rep proc_list_rep
 
 adhoc_overloading rep DAList.impl_of
+
+text \<open>
+  We model the kernel storage as a record with three fields:
+  \begin{itemize}
+    \item @{text curr_proc} field stores the Ethereum address of the current procedure;
+    \item @{text entry_proc} field stores the Ethereum address of the entry procedure;
+    \item @{text proc_list} field stores the list of all registered procedures (with their data).
+  \end{itemize}
+\<close>
 
 record kernel =
   curr_proc  :: ethereum_address
@@ -1864,7 +1992,7 @@ lemma proc_id_alt[simp]:
   "has_key k \<sigma> \<Longrightarrow> \<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor> ! \<lfloor>proc_id \<sigma> k\<rfloor> = (k, proc \<sigma> k)"
 proof-
   assume "has_key k \<sigma>"
-  hence 0:"(k, proc \<sigma> k) \<in> set \<lfloor>\<lfloor>kernel.proc_list \<sigma>\<rfloor>\<rfloor>"
+  hence 0:"(k, proc \<sigma> k) \<in> set \<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor>"
     unfolding has_key_def proc_def DAList.lookup_def
     by auto
   hence "length (takeWhile ((\<noteq>) k \<circ> fst) \<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor>) \<in> proc_ids \<sigma>"
@@ -1898,6 +2026,8 @@ proof-
     by (auto intro:prod_eqI)
 qed
 
+text \<open>Low-level representation of the kernel storage is a 256 x 256 bits key-value store. \<close>
+
 definition "kernel_rep (\<sigma> :: kernel) r a \<equiv>
   case \<lceil>a\<rceil> of
     None              \<Rightarrow> r a
@@ -1921,7 +2051,7 @@ lemma proc_list_eqI[intro]:
   unfolding has_key_def DAList.lookup_def proc_def
 proof-
   from assms have "\<forall> i < nprocs \<sigma>\<^sub>1.
-                    snd (\<lfloor>\<lfloor>kernel.proc_list \<sigma>\<^sub>1\<rfloor>\<rfloor> ! i) = snd (\<lfloor>\<lfloor>kernel.proc_list \<sigma>\<^sub>2\<rfloor>\<rfloor> ! i)"
+                    snd (\<lfloor>\<lfloor>proc_list \<sigma>\<^sub>1\<rfloor>\<rfloor> ! i) = snd (\<lfloor>\<lfloor>proc_list \<sigma>\<^sub>2\<rfloor>\<rfloor> ! i)"
     unfolding has_key_def DAList.lookup_def proc_def
     apply (auto iff:fun_eq_iff)
     using
@@ -1934,7 +2064,9 @@ proof-
              iff:proc_list_rep_inject[symmetric] impl_of_inject[symmetric] fun_eq_iff)
 qed
 
-lemma kernel_rep_inj[simp]: "\<lfloor>\<sigma>\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>\<sigma>\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> \<sigma>\<^sub>1 = \<sigma>\<^sub>2" for \<sigma>\<^sub>1 \<sigma>\<^sub>2 :: kernel
+text \<open>Low-level representation of the kernel storage is injective.\<close>
+
+lemma kernel_rep_inj[dest]: "\<lfloor>\<sigma>\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>\<sigma>\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> \<sigma>\<^sub>1 = \<sigma>\<^sub>2" for \<sigma>\<^sub>1 \<sigma>\<^sub>2 :: kernel
 proof (rule kernel.equality)
   assume "\<lfloor>\<sigma>\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>\<sigma>\<^sub>2\<rfloor> r\<^sub>2"
   hence eq:"\<And> a. \<lfloor>\<sigma>\<^sub>1\<rfloor> r\<^sub>1 a = \<lfloor>\<sigma>\<^sub>2\<rfloor> r\<^sub>2 a" by simp
@@ -1967,6 +2099,8 @@ proof (rule kernel.equality)
   ultimately show "proc_list \<sigma>\<^sub>1 = proc_list \<sigma>\<^sub>2" ..
 qed simp
 
+text \<open>Representation function is invertible.\<close>
+
 lemmas kernel_invertible[intro] = invertible2.intro[OF inj2I, OF kernel_rep_inj]
 
 interpretation kernel_inv: invertible2 kernel_rep ..
@@ -1977,7 +2111,7 @@ lemma kernel_update_neq[simp]: "\<not> limited_and prefix_bound a \<Longrightarr
 proof-
   assume "\<not> limited_and prefix_bound a"
   hence "(\<lceil>a\<rceil> :: address option) = None"
-    using addr_prefix by - (rule ccontr, auto dest:addr_inv.inv_inj')
+    using addr_prefix by - (rule ccontr, auto)
   thus ?thesis unfolding kernel_rep_def by auto
 qed
 
@@ -1987,11 +2121,11 @@ primrec split :: "'a::len word list \<Rightarrow> 'b::len word list list" where
   "split []       = []" |
   "split (x # xs) = word_rsplit x # split xs"
 
-lemma cat_split[simp]: "map word_rcat (split x) = x"
+lemma cat_split: "map word_rcat (split x) = x"
   unfolding split_def
   by (induct x, simp_all add:word_rcat_rsplit)
 
-lemma split_inj[simp]: "split x = split y \<Longrightarrow> x = y"
+lemma split_inj[dest]: "split x = split y \<Longrightarrow> x = y"
   by (frule arg_cong[where f="map word_rcat"]) (subst (asm) cat_split)+
 
 subsection \<open>Deterministic inverse function\<close>
@@ -2053,7 +2187,7 @@ definition inv2_tf :: "'c list \<Rightarrow> 'a option" where "inv2_tf \<equiv> 
 
 lemmas inv2_tf_inj[folded inv2_tf_def, simp] = maybe_inv2_tf_inj[where z=0, OF inj len_inv]
 
-lemmas inv2_tf_inj'[folded inv2_tf_def, simp] = maybe_inv2_tf_inj'[where z=0, OF inj len_inv]
+lemmas inv2_tf_inj'[folded inv2_tf_def, dest] = maybe_inv2_tf_inj'[where z=0, OF inj len_inv]
 end
 
 subsection \<open>Register system call\<close>
@@ -2069,6 +2203,21 @@ definition "wf_cap c l \<equiv>
   | (Send,  [c])      \<Rightarrow> (\<lceil>c\<rceil> :: external_call_capability option) \<noteq> None
   | _                 \<Rightarrow> False"
 
+lemma length_wf_cap[dest]: "wf_cap c l \<Longrightarrow> length l \<le> 5"
+  unfolding wf_cap_def using log_cap_rep'
+  by (auto split:capability.splits list.splits)
+
+definition "same_cap c l\<^sub>1 l\<^sub>2 \<equiv>
+  case (c, l\<^sub>1, l\<^sub>2) of
+    (Call,  [c\<^sub>1], [c\<^sub>2])            \<Rightarrow> the \<lceil>c\<^sub>1\<rceil> = (the \<lceil>c\<^sub>2\<rceil> :: prefixed_capability)
+  | (Reg,   [c\<^sub>1], [c\<^sub>2])            \<Rightarrow> the \<lceil>c\<^sub>1\<rceil> = (the \<lceil>c\<^sub>2\<rceil> :: prefixed_capability)
+  | (Del,   [c\<^sub>1], [c\<^sub>2])            \<Rightarrow> the \<lceil>c\<^sub>1\<rceil> = (the \<lceil>c\<^sub>2\<rceil> :: prefixed_capability)
+  | (Entry, [],   [])              \<Rightarrow> True
+  | (Write, [c1\<^sub>1, c2\<^sub>1], [c1\<^sub>2, c2\<^sub>2]) \<Rightarrow> the \<lceil>(c1\<^sub>1, c2\<^sub>1)\<rceil> = (the \<lceil>(c1\<^sub>2, c2\<^sub>2)\<rceil> :: write_capability)
+  | (Log,   c\<^sub>1,   c\<^sub>2)               \<Rightarrow> the \<lceil>c\<^sub>1\<rceil> = (the \<lceil>c\<^sub>2\<rceil> :: log_capability)
+  | (Send,  [c\<^sub>1], [c\<^sub>2])             \<Rightarrow> the \<lceil>c\<^sub>1\<rceil> = (the \<lceil>c\<^sub>2\<rceil> :: external_call_capability)
+  |  _                              \<Rightarrow> False"
+
 definition "overwrite_cap c l r \<equiv>
   case (c, l) of
     (Call,  [c])        \<Rightarrow> [\<lfloor>the \<lceil>c\<rceil> :: prefixed_capability\<rfloor> (r ! 0)]
@@ -2081,15 +2230,39 @@ definition "overwrite_cap c l r \<equiv>
   | (Log,   c)          \<Rightarrow> \<lfloor>the \<lceil>c\<rceil> :: log_capability\<rfloor>
   | (Send,  [c])        \<Rightarrow> [\<lfloor>the \<lceil>c\<rceil> :: external_call_capability\<rfloor> (r ! 0)]"
 
+lemma overwrite_cap_wf: "wf_cap c l \<Longrightarrow> wf_cap c (overwrite_cap c l r)"
+  unfolding wf_cap_def overwrite_cap_def
+  by (auto split:capability.splits list.splits simp add:write_cap_inv.inv_inj')
+
+abbreviation "zero_fill l \<equiv> replicate (length l) 0"
+
+lemma same_cap_inj[dest]:
+  "same_cap c l\<^sub>1 l\<^sub>2 \<Longrightarrow> overwrite_cap c l\<^sub>1 (zero_fill l\<^sub>1) = overwrite_cap c l\<^sub>2 (zero_fill l\<^sub>2)"
+  unfolding same_cap_def overwrite_cap_def
+  by (simp split:capability.splits)
+     (auto split:capability.splits list.splits)+
+
+lemma overwrite_cap_inj[dest]:
+  "\<lbrakk>overwrite_cap c l\<^sub>1 r\<^sub>1 = overwrite_cap c l\<^sub>2 r\<^sub>2; wf_cap c l\<^sub>1; wf_cap c l\<^sub>2\<rbrakk> \<Longrightarrow> same_cap c l\<^sub>1 l\<^sub>2"
+  unfolding wf_cap_def overwrite_cap_def same_cap_def
+  by (simp split:capability.splits)
+    (auto split:capability.splits list.splits simp add:write_cap_inv.inv_inj')
+
+lemma length_overwrite_cap[simp]: "wf_cap c l \<Longrightarrow> length (overwrite_cap c l r) = length l"
+  unfolding wf_cap_def overwrite_cap_def
+  by (auto split:capability.splits list.split prod.split)
+
 typedef capability_data =
   "{ l :: ((capability \<times> capability_index) \<times> word32 list) list.
-       \<forall> ((c, _), l) \<in> set l. wf_cap c l }"
-  morphisms cap_data_rep cap_data
+       \<forall> ((c, _), l) \<in> set l. wf_cap c l \<and> l = overwrite_cap c l (replicate (length l) 0) }"
+  morphisms cap_data_rep' cap_data
   by (intro exI[of _ "[]"], simp)
 
-adhoc_overloading rep cap_data_rep
+adhoc_overloading rep cap_data_rep'
 
-record reg_call =
+adhoc_overloading abs cap_data
+
+record register_call_data =
   proc_key :: key
   eth_addr :: ethereum_address
   cap_data :: capability_data
@@ -2119,20 +2292,361 @@ interpretation cap_index_inv0: invertible cap_index_rep0 ..
 
 adhoc_overloading abs cap_index_inv0.inv
 
+abbreviation "cap_data_rep_single r (c :: capability) (i :: capability_index) l j d \<equiv>
+  [ucast (of_nat (3 + length l) :: byte) OR (r ! j) \<restriction> {LENGTH(byte) ..<LENGTH(word32)},
+   ucast \<lfloor>c\<rfloor> OR (r ! (j + 1)) \<restriction> {LENGTH(byte) ..<LENGTH(word32)},
+   ucast \<lfloor>i\<rfloor> OR (r ! (j + 2)) \<restriction> {LENGTH(byte) ..<LENGTH(word32)}]
+  @ overwrite_cap c l (drop (j + 3) r)"
+
+definition "cap_data_rep0 r \<equiv>
+  \<lambda> ((c, i), l) (j, d). (j + 3 + length l, cap_data_rep_single r c i l j d # d)"
+
+lemma length_cap_data_rep0:
+  fixes d :: capability_data
+  assumes "cap_data_rep0 r ((c, i), l) acc = (j, x # xs)" and "((c, i), l) \<in> set \<lfloor>d\<rfloor>"
+  shows   "length x = unat (hd x AND mask LENGTH(byte))"
+proof-
+  from assms(2) have "wf_cap c l" using cap_data_rep'[of d] by auto
+  with assms(1) show ?thesis
+    unfolding cap_data_rep0_def
+    by (auto split:prod.splits simp add:unat_ucast_upcast unat_of_nat_eq)
+      (auto simp add:unat_of_nat_eq)
+qed
+
+lemma length_cap_data_rep0':
+  "\<lbrakk>[l] = snd (cap_data_rep0 r x acc); x \<in> set \<lfloor>d\<rfloor>\<rbrakk> \<Longrightarrow>
+    length l = unat (hd l AND mask LENGTH(byte))"
+  (is "\<lbrakk>?l; ?in_set\<rbrakk> \<Longrightarrow> _")
+  for d :: capability_data
+proof-
+  assume ?l and ?in_set
+  obtain c i l' j ls
+    where "cap_data_rep0 r ((c, i), l') acc = (j, l # ls)"
+      and "((c, i), l') \<in> set \<lfloor>d\<rfloor>"
+  proof (cases "cap_data_rep0 r x acc")
+    fix j lls
+    assume 0:"cap_data_rep0 r x acc = (j, lls)"
+    with \<open>?l\<close> have 1:"lls = l # []" by (metis snd_conv)
+    from \<open>?l\<close> show ?thesis proof (cases x)
+      fix ci l'
+      assume 2:"x = (ci, l')"
+      show ?thesis proof (cases ci)
+        fix c i
+        assume "ci = (c, i)"
+        with that[of c i l' j "[]"] 0 1 2 \<open>?in_set\<close> \<open>?l\<close> show ?thesis by simp
+      qed
+    qed
+  qed
+  thus ?thesis using length_cap_data_rep0 by simp
+qed
+
+definition "cap_data_rep (d :: capability_data) r \<equiv> fold (cap_data_rep0 r) \<lfloor>d\<rfloor>"
+
+lemma cap_data_rep'_tail: "\<lfloor>d\<rfloor> = x # xs \<Longrightarrow> xs = \<lfloor>\<lceil>xs\<rceil>\<rfloor>" for d :: capability_data
+  using cap_data_rep'[of d]
+  by (auto intro:cap_data_inverse[symmetric])
+
+lemma length_snd_cap_data_rep[simp]:
+  "length (snd (cap_data_rep d r i)) = length \<lfloor>d\<rfloor> + length (snd i)"
+proof (induction "\<lfloor>d\<rfloor>" arbitrary:d)
+  case Nil
+  thus ?case unfolding cap_data_rep_def by simp
+next
+  {
+    fix r xs i
+    have "length (snd (fold (cap_data_rep0 r) xs i)) = length xs + length (snd i)"
+      unfolding cap_data_rep0_def by (induction xs arbitrary: i, simp_all split:prod.split)
+  } note [simp] = this
+  case (Cons x xs)
+  from Cons.hyps(1)[of "\<lceil>xs\<rceil>"] show ?case
+    unfolding cap_data_rep_def  using cap_data_rep'_tail
+    by ((subst Cons.hyps(2)[symmetric])+, simp split:prod.splits)
+      (simp add:cap_data_rep0_def split:prod.splits)
+qed
+
+lemma cap_data_rep_inj[dest]:
+  "\<lbrakk>cap_data_rep d\<^sub>1 r\<^sub>1 i\<^sub>1 = cap_data_rep d\<^sub>2 r\<^sub>2 i\<^sub>2; length (snd i\<^sub>1) = length (snd i\<^sub>2)\<rbrakk> \<Longrightarrow> d\<^sub>1 = d\<^sub>2"
+  (is "\<lbrakk>?eq_rep d\<^sub>1 i\<^sub>1 d\<^sub>2 i\<^sub>2; ?eq_length i\<^sub>1 i\<^sub>2\<rbrakk> \<Longrightarrow> _")
+proof (induction "\<lfloor>d\<^sub>1\<rfloor>" arbitrary:d\<^sub>1 d\<^sub>2 i\<^sub>1 i\<^sub>2)
+  case Nil
+  moreover hence "length (snd (cap_data_rep d\<^sub>1 r\<^sub>1 i\<^sub>1)) = length (snd i\<^sub>1)" by (simp (no_asm))
+  ultimately have "\<lfloor>d\<^sub>1\<rfloor> = \<lfloor>d\<^sub>2\<rfloor>" by simp
+  thus ?case by (simp add:cap_data_rep'_inject)
+next
+  {
+    fix xs j\<^sub>1 j\<^sub>2 l\<^sub>1 l\<^sub>2
+    have "fold (cap_data_rep0 r\<^sub>1) xs (j\<^sub>1, l\<^sub>1) = fold (cap_data_rep0 r\<^sub>2) xs (j\<^sub>2, l\<^sub>2) \<Longrightarrow> l\<^sub>1 = l\<^sub>2"
+      unfolding cap_data_rep0_def
+      by (induction xs arbitrary: j\<^sub>1 j\<^sub>2 l\<^sub>1 l\<^sub>2, auto split:prod.splits)
+  } note inj = this
+  case (Cons x xs)
+  hence "length \<lfloor>d\<^sub>2\<rfloor> = length \<lfloor>d\<^sub>1\<rfloor>" by (metis add_right_cancel length_snd_cap_data_rep)
+  with \<open>x # xs = \<lfloor>d\<^sub>1\<rfloor>\<close> obtain y ys where "\<lfloor>d\<^sub>2\<rfloor> = y # ys" by (metis length_Suc_conv)
+  from \<open>x # xs = \<lfloor>d\<^sub>1\<rfloor>\<close> have d\<^sub>1:"\<lfloor>d\<^sub>1\<rfloor> = x # xs" ..
+  note d\<^sub>2 = \<open>\<lfloor>d\<^sub>2\<rfloor> = y # ys\<close>
+  from \<open>?eq_rep d\<^sub>1 i\<^sub>1 d\<^sub>2 i\<^sub>2\<close> obtain i\<^sub>1' and i\<^sub>2'
+    where "cap_data_rep \<lceil>xs\<rceil> r\<^sub>1 i\<^sub>1' = cap_data_rep \<lceil>ys\<rceil> r\<^sub>2 i\<^sub>2'"
+      and   "length (snd i\<^sub>1') = length (snd i\<^sub>1) + 1"
+      and   "length (snd i\<^sub>2') = length (snd i\<^sub>2) + 1"
+    unfolding cap_data_rep_def cap_data_rep0_def
+    using cap_data_rep'_tail[OF d\<^sub>2] cap_data_rep'_tail[OF d\<^sub>1]
+    by (auto simp add:d\<^sub>1 d\<^sub>2 split:prod.split)
+  with \<open>?eq_rep d\<^sub>1 i\<^sub>1 d\<^sub>2 i\<^sub>2\<close> \<open>?eq_length i\<^sub>1 i\<^sub>2\<close> have tls:"xs = ys"
+    using cap_data_rep'_tail[OF d\<^sub>1] cap_data_rep'_tail[OF d\<^sub>2]
+    by (auto dest:Cons.hyps(1)[OF cap_data_rep'_tail[OF d\<^sub>1]])
+  with \<open>?eq_rep d\<^sub>1 i\<^sub>1 d\<^sub>2 i\<^sub>2\<close> d\<^sub>1 d\<^sub>2 have "snd (cap_data_rep0 r\<^sub>1 x i\<^sub>1) = snd (cap_data_rep0 r\<^sub>2 y i\<^sub>2)"
+    unfolding cap_data_rep_def
+    by auto (metis inj prod.collapse)
+  moreover have "wf_cap (fst (fst x)) (snd x)" and  "wf_cap (fst (fst y)) (snd y)"
+    using cap_data_rep'[of d\<^sub>1] d\<^sub>1 cap_data_rep'[of d\<^sub>2]  d\<^sub>2
+   by auto
+  ultimately have "x = y" unfolding cap_data_rep0_def
+    apply (auto split:prod.splits
+        del:cap_type_rep_inj overwrite_cap_inj
+        dest!:cap_type_rep_inj overwrite_cap_inj)
+    using cap_data_rep'[of d\<^sub>1] d\<^sub>1 cap_data_rep'[of d\<^sub>2] d\<^sub>2
+    by auto
+  with tls d\<^sub>1 d\<^sub>2 have "\<lfloor>d\<^sub>1\<rfloor> = \<lfloor>d\<^sub>2\<rfloor>" by simp
+  thus ?case by (simp add:cap_data_rep'_inject)
+qed
+
+lemma cap_data_rep_lengths:
+  "list_all ((\<noteq>) []) l \<Longrightarrow> list_all ((\<noteq>) []) (snd (cap_data_rep d r (i, l)))"
+proof (induction "\<lfloor>d\<rfloor>" arbitrary:d i l)
+  case Nil
+  thus ?case unfolding cap_data_rep_def by simp
+next
+  case (Cons x xs)
+  then obtain i' l' where "cap_data_rep0 r x (i, l) = (i', l')" and "list_all ((\<noteq>) []) l'"
+    unfolding cap_data_rep0_def by (induction x) auto
+  with Cons show ?case
+    using cap_data_rep'_tail[of d, OF Cons.hyps(2)[symmetric]] Cons.hyps(1)[of "\<lceil>xs\<rceil>" l' i']
+    unfolding cap_data_rep_def
+    by (rewrite in \<open>_ # _ = \<lfloor>d\<rfloor>\<close> in asm eq_commute) auto
+qed
+
+lemma cap_data_rep_index[simp]:
+  assumes "sum_list (map length l) \<le> i"
+  shows "fst (cap_data_rep d r (i, l)) =
+         sum_list (map length (snd (cap_data_rep d r (i, l)))) + (i - sum_list (map length l))"
+  using assms
+proof (induction "\<lfloor>d\<rfloor>" arbitrary:d i l)
+  case Nil
+  thus ?case unfolding cap_data_rep_def by auto
+next
+  case (Cons x xs)
+  from Cons(2) have wf:"wf_cap (fst (fst x)) (snd x)"
+    using cap_data_rep'[of d] list.set_intros(1)[of x xs]
+    by (induction x) auto
+  hence 0:"length (overwrite_cap (fst (fst x)) (snd x) (drop (i + 3) r)) = length (snd x)" by simp
+  let "?i'" = "fst (cap_data_rep0 r x (i, l))"
+    and "?l'" = "snd (cap_data_rep0 r x (i, l))"
+  from 0 have "sum_list (map length ?l') = sum_list (map length l) + length (snd x) + 3"
+    unfolding cap_data_rep0_def by (auto split:prod.splits)
+  hence 1:"?i' = sum_list (map length ?l') + (i - sum_list (map length l))"
+    unfolding cap_data_rep0_def using Cons(3) by (simp split:prod.splits)
+  from Cons(3) have 2:"sum_list (map length ?l') \<le> ?i'"
+    unfolding cap_data_rep0_def using wf by (auto split:prod.splits)
+  from Cons(1)[of "\<lceil>xs\<rceil>" ?l' ?i', OF _ 2] cap_data_rep'_tail[OF Cons(2)[symmetric]]
+  show ?case unfolding cap_data_rep_def by ((subst Cons(2)[symmetric])+, simp) (insert 1, simp)
+qed
+
+lemma cap_data_rep_dest:
+  assumes "snd (cap_data_rep d r (i, [])) \<noteq> []"
+  obtains i' where
+    "snd (cap_data_rep d r (i, l)) =
+   hd (snd (cap_data_rep0 r (last \<lfloor>d\<rfloor>) (i', []))) # snd (cap_data_rep \<lceil>butlast \<lfloor>d\<rfloor>\<rceil> r (i, l))"
+  using assms(1)
+proof (induction "\<lfloor>d\<rfloor>" arbitrary:d i l ?thesis)
+  case Nil
+  thus ?case unfolding cap_data_rep_def by simp
+next
+  case nonemp:(Cons x xs)
+  show ?case proof (cases xs)
+    case Nil
+    from nonemp(1,3,4) show ?thesis
+      unfolding cap_data_rep_def cap_data_rep0_def using cap_data_inverse
+      by (simp add:nonemp(2)[symmetric] Nil split:prod.splits)
+  next
+    case (Cons x' xs')
+    let ?l' = "snd (cap_data_rep0 r x (i, l))"
+      and ?i' = "fst (cap_data_rep0 r x (i, l))"
+    from cap_data_rep'_tail[OF nonemp(2)[symmetric]] have xs:"\<lfloor>\<lceil>xs\<rceil>\<rfloor> = xs" ..
+    let ?repx' = "cap_data_rep0 r x' (?i', [])"
+    have lenx':"length (snd ?repx') > 0" unfolding cap_data_rep0_def by (simp split:prod.split)
+    from cap_data_rep'_tail[of "\<lceil>xs\<rceil>"] xs Cons have xs':"\<lfloor>\<lceil>xs'\<rceil>\<rfloor> = xs'" by simp
+    from xs' have "\<And> i l. length l \<le> length (snd (cap_data_rep \<lceil>xs'\<rceil> r (i, l)))"
+    proof (induction xs')
+      case Nil
+      thus ?case by simp
+    next
+      case (Cons y ys)
+      let ?i' = "fst (cap_data_rep0 r y (i, l))"
+        and ?l' = "snd (cap_data_rep0 r y (i, l))"
+      note 0 = cap_data_rep'_tail[OF Cons(2), symmetric]
+      with Cons(1)[OF 0, of ?l' ?i'] Cons(2)
+      show ?case unfolding cap_data_rep_def cap_data_rep0_def by (simp split:prod.splits)
+    qed
+    from this[of "snd ?repx'" "fst ?repx'"] xs xs' Cons lenx'
+    have 0:"snd (cap_data_rep \<lceil>x' # xs'\<rceil> r (?i', [])) \<noteq> []" unfolding cap_data_rep_def by auto
+    from nonemp(2) Cons last_ConsR[of xs x] have 1:"last xs = last \<lfloor>d\<rfloor>" by simp
+    from cap_data_inverse[of "butlast xs"] cap_data_rep'[of "\<lceil>xs\<rceil>"] xs
+    have 2:"\<lfloor>\<lceil>butlast xs\<rceil>\<rfloor> = butlast xs" by (auto split:prod.splits dest!:in_set_butlastD)
+    from cap_data_inverse[of "butlast \<lfloor>d\<rfloor>"] cap_data_rep'[of "d"]
+    have 3:"\<lfloor>\<lceil>butlast \<lfloor>d\<rfloor>\<rceil>\<rfloor> = butlast \<lfloor>d\<rfloor>" by (auto split:prod.splits dest!:in_set_butlastD)
+    from Cons have 4:"butlast \<lfloor>d\<rfloor> = x # butlast xs" by (rewrite nonemp(2)[symmetric], simp)
+    from nonemp(1)[of "\<lceil>xs\<rceil>" ?i' ?l', OF xs[symmetric]] 0 Cons obtain i'' where
+      "snd (cap_data_rep \<lceil>xs\<rceil> r (?i', ?l')) =
+         hd (snd (cap_data_rep0 r (last xs) (i'', []))) #
+           snd (cap_data_rep \<lceil>butlast xs\<rceil> r (?i', ?l'))"
+      using xs
+      by auto
+    with nonemp(3) xs show ?thesis unfolding cap_data_rep_def
+      by (rewrite in asm nonemp(2)[symmetric]) (rewrite in asm 3, simp add: 1 2 4)
+  qed
+qed
+
+definition "cap_data_rep1 r \<equiv>
+  \<lambda> ((c, i), l) (j, d). (j + 3 + length l, d @ [cap_data_rep_single r c i l j d])"
+
+lemma cap_data_rep1_fold_pull[simp]:
+  "snd (fold (cap_data_rep1 r) d (i, x # xs)) = x # snd (fold (cap_data_rep1 r) d (i, xs))"
+proof (induction d arbitrary:xs i)
+  case Nil
+  thus ?case by simp
+next
+  case (Cons d ds)
+  obtain xs' i' where
+    "cap_data_rep1 r d (i, x # xs) = (i', x # xs @ xs')" and
+    "cap_data_rep1 r d (i, xs) = (i', xs @ xs')"
+    unfolding cap_data_rep1_def by (induction d) auto
+  with Cons(1)[of i' "xs @ xs'"] show ?case by simp
+qed
+
+lemma cap_data_rep_rel:
+  "rev (snd (cap_data_rep d r (i, l))) = rev l @ snd (fold (cap_data_rep1 r) \<lfloor>d\<rfloor> (i, []))"
+proof (induction "\<lfloor>d\<rfloor>" arbitrary: d i l)
+  case Nil
+  thus ?case unfolding cap_data_rep_def by simp
+next
+  case (Cons x xs)
+  from cap_data_rep'_tail[OF Cons(2)[symmetric]] have xs:"\<lfloor>\<lceil>xs\<rceil>\<rfloor> = xs" ..
+  let ?i' = "fst (cap_data_rep0 r x (i, l))"
+    and ?l' = "snd (cap_data_rep0 r x (i, l))"
+  obtain i'' x' where 0:"cap_data_rep1 r x (i, []) = (i'', x' # [])"
+    unfolding cap_data_rep1_def by (induction x) auto
+  hence 1:"rev (snd (cap_data_rep0 r x (i, []))) = [x']"
+    unfolding cap_data_rep0_def cap_data_rep1_def by (induction x) auto
+  have [simp]: "fst (cap_data_rep0 r x (i, [])) = fst (cap_data_rep1 r x (i, []))"
+    unfolding cap_data_rep0_def cap_data_rep1_def by (induction x) auto
+  have [simp]:
+    "cap_data_rep0 r x (i, l) =
+    (fst (cap_data_rep0 r x (i, [])), snd (cap_data_rep0 r x (i, [])) @ l)"
+    unfolding cap_data_rep0_def by (simp split:prod.split)
+  from Cons(1)[of "\<lceil>xs\<rceil>" ?i' ?l', OF xs[symmetric]] xs
+  show ?case unfolding cap_data_rep_def
+    by (simp add: Cons(2)[symmetric] 0 1)
+qed
+
+lemma concat_cap_data_rep_inj_snd[dest]:
+  fixes d\<^sub>1' d\<^sub>2' :: capability_data
+  assumes "concat (snd (fold (cap_data_rep1 r\<^sub>1) d\<^sub>1 (i\<^sub>1, []))) =
+           concat (snd (fold (cap_data_rep1 r\<^sub>2) d\<^sub>2 (i\<^sub>2, [])))"
+  assumes "d\<^sub>1 = \<lfloor>d\<^sub>1'\<rfloor>" and "d\<^sub>2 = \<lfloor>d\<^sub>2'\<rfloor>"
+  shows   "snd (fold (cap_data_rep1 r\<^sub>1) d\<^sub>1 (i\<^sub>1, [])) =
+           snd (fold (cap_data_rep1 r\<^sub>2) d\<^sub>2 (i\<^sub>2, []))"
+  using assms
+proof (induction d\<^sub>1 arbitrary: d\<^sub>1' d\<^sub>2 d\<^sub>2' i\<^sub>1 i\<^sub>2)
+  case Nil
+  from Nil(3) have 0: "snd (fold (cap_data_rep1 r\<^sub>2) d\<^sub>2 (i\<^sub>2, [])) =
+                       rev (snd (cap_data_rep d\<^sub>2' r\<^sub>2 (i\<^sub>2, [])))"
+    by (subst rev_is_rev_conv[symmetric], simp add:cap_data_rep_rel)
+  from Nil(3) have 1:"d\<^sub>2 \<noteq> [] \<Longrightarrow> set (snd (cap_data_rep d\<^sub>2' r\<^sub>2 (i\<^sub>2, []))) \<noteq> {}"
+    using length_snd_cap_data_rep[of d\<^sub>2' r\<^sub>2 "(i\<^sub>2, [])"] by force
+  from Nil[simplified] have "d\<^sub>2 \<noteq> [] \<Longrightarrow> False"
+    using cap_data_rep_lengths[of "[]" d\<^sub>2' r\<^sub>2 i\<^sub>2, simplified, unfolded list_all_def]
+    by (subst (asm) 0) (subst (asm) set_rev, frule 1, metis equals0I)
+  thus ?case by (cases d\<^sub>2, simp_all)
+next
+  case (Cons x xs)
+  obtain i\<^sub>1' l\<^sub>1' where
+    0:"cap_data_rep1 r\<^sub>1 x (i\<^sub>1, []) = (i\<^sub>1', l\<^sub>1' # [])" and
+    1:"l\<^sub>1' \<noteq> []" and
+    2:"[l\<^sub>1'] = snd (cap_data_rep1 r\<^sub>1 x (i\<^sub>1, []))"
+    unfolding cap_data_rep1_def by (induction x) auto
+  have
+    l:"concat (snd (fold (cap_data_rep1 r\<^sub>1) (x # xs) (i\<^sub>1, []))) =
+     l\<^sub>1' @ concat (snd (fold (cap_data_rep1 r\<^sub>1) xs (i\<^sub>1', [])))"
+    by (simp add:0)
+  from Cons(2) have "snd (fold (cap_data_rep1 r\<^sub>2) d\<^sub>2 (i\<^sub>2, [])) \<noteq> []"
+    by (auto simp add:0 1)
+  hence "d\<^sub>2 \<noteq> []" by auto
+  then obtain y ys where 3:"d\<^sub>2 = y # ys" by (cases d\<^sub>2, auto)
+  obtain i\<^sub>2' l\<^sub>2' where
+    4:"cap_data_rep1 r\<^sub>2 y (i\<^sub>2, []) = (i\<^sub>2', l\<^sub>2' # [])" and
+    5:"l\<^sub>2' \<noteq> []" and
+    6:"[l\<^sub>2'] = snd (cap_data_rep1 r\<^sub>2 y (i\<^sub>2, []))"
+    unfolding cap_data_rep1_def by (induction y) auto
+  have
+    r:"concat (snd (fold (cap_data_rep1 r\<^sub>2) d\<^sub>2 (i\<^sub>2, []))) =
+       l\<^sub>2' @ concat (snd (fold (cap_data_rep1 r\<^sub>2) ys (i\<^sub>2', [])))"
+    by (simp add: 3 4)
+
+  from 2 have 7:"[l\<^sub>1'] = snd (cap_data_rep0 r\<^sub>1 x (i\<^sub>1, []))"
+    unfolding cap_data_rep0_def cap_data_rep1_def by (cases x) auto
+  from Cons(3) have 8:"x \<in> set \<lfloor>d\<^sub>1'\<rfloor>" using list.set_intros(1)[of x xs] by simp
+  note 9 = length_cap_data_rep0'[OF 7 8]
+  from 6 have 10:"[l\<^sub>2'] = snd (cap_data_rep0 r\<^sub>2 y (i\<^sub>2, []))"
+    unfolding cap_data_rep0_def cap_data_rep1_def by (cases y) auto
+  from Cons(4) 3 have 11:"y \<in> set \<lfloor>d\<^sub>2'\<rfloor>" using list.set_intros(1)[of y ys] by simp
+  note 12 = length_cap_data_rep0'[OF 10 11]
+  from Cons(2) l r 1 5 9 12 have 13:"l\<^sub>1' = l\<^sub>2'" by (metis append_eq_append_conv hd_append2)
+  with Cons(2) l r
+  have 14:"concat (snd (fold (cap_data_rep1 r\<^sub>1) xs (i\<^sub>1', []))) =
+           concat (snd (fold (cap_data_rep1 r\<^sub>2) ys (i\<^sub>2', [])))" by simp
+
+  note xs = cap_data_rep'_tail[OF Cons(3)[symmetric]]
+  from cap_data_rep'_tail[of d\<^sub>2'] Cons(4) 3 have ys:"ys = \<lfloor>\<lceil>ys\<rceil>\<rfloor>" by blast
+  note 15 = Cons(1)[OF 14 xs ys]
+
+  from 0 3 4 13 15 show ?case by simp
+qed
+
+lemma concat_cap_data_rep_inj[simplified, dest]:
+  "(concat \<circ> rev \<circ> snd) (cap_data_rep d\<^sub>1 r\<^sub>1 (i, [])) =
+   (concat \<circ> rev \<circ> snd) (cap_data_rep d\<^sub>2 r\<^sub>2 (i, [])) \<Longrightarrow>
+   cap_data_rep d\<^sub>1 r\<^sub>1 (i, []) = cap_data_rep d\<^sub>2 r\<^sub>2 (i, [])"
+  (is "?prem \<Longrightarrow> _")
+proof
+  assume ?prem
+  hence
+    "concat (snd (fold (cap_data_rep1 r\<^sub>1) \<lfloor>d\<^sub>1\<rfloor> (i, []))) =
+     concat (snd (fold (cap_data_rep1 r\<^sub>2) \<lfloor>d\<^sub>2\<rfloor> (i, [])))"
+    by (simp add:cap_data_rep_rel)
+  hence "snd (fold (cap_data_rep1 r\<^sub>1) \<lfloor>d\<^sub>1\<rfloor> (i, [])) = snd (fold (cap_data_rep1 r\<^sub>2) \<lfloor>d\<^sub>2\<rfloor> (i, []))"
+    by auto
+  thus "snd (cap_data_rep d\<^sub>1 r\<^sub>1 (i, [])) = snd (cap_data_rep d\<^sub>2 r\<^sub>2 (i, []))"
+    by (simp add:cap_data_rep_rel[where l="[]", simplified, symmetric])
+  thus "fst (cap_data_rep d\<^sub>1 r\<^sub>1 (i, [])) = fst (cap_data_rep d\<^sub>2 r\<^sub>2 (i, []))"
+    by simp
+qed
+
 definition "reg_call_rep d r \<equiv>
     [ucast (proc_key d) OR (r ! 0) \<restriction> {LENGTH(key) ..<LENGTH(word32)},
-     ucast (eth_addr d) OR (r ! 1) \<restriction> {LENGTH(key) ..<LENGTH(word32)}] @
-     snd
-      (fold
-        (\<lambda> ((c, i), l) (j, d).
-          (j + 3 + length l,
-           d @
-           [ucast (of_nat (3 + length l) :: byte) OR (r ! j) \<restriction> {LENGTH(byte) ..<LENGTH(word32)},
-            ucast \<lfloor>c\<rfloor> OR (r ! (j + 1)) \<restriction> {LENGTH(byte) ..<LENGTH(word32)},
-            ucast \<lfloor>i\<rfloor> OR (r ! (j + 2)) \<restriction> {LENGTH(byte) ..<LENGTH(word32)}]
-           @ overwrite_cap c l (drop (j + 3) r)))
-        \<lfloor>cap_data d\<rfloor>
-        (2, []))"
+     ucast (eth_addr d) OR (r ! 1) \<restriction> {LENGTH(ethereum_address) ..<LENGTH(word32)}] @
+     ((concat \<circ> rev \<circ> snd) (cap_data_rep (cap_data d) r (2, [])))"
+
+adhoc_overloading rep reg_call_rep
+
+lemma reg_call_rep_inj[dest]: "\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>d\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: register_call_data
+proof (rule register_call_data.equality)
+  assume eq:"\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>d\<^sub>2\<rfloor> r\<^sub>2"
+
+  from eq show "proc_key d\<^sub>1 = proc_key d\<^sub>2" unfolding reg_call_rep_def by auto
+  from eq show "eth_addr d\<^sub>1 = eth_addr d\<^sub>2" unfolding reg_call_rep_def by auto
+
+  from eq show "cap_data d\<^sub>1 = cap_data d\<^sub>2" unfolding reg_call_rep_def by auto
+qed simp
 
 datatype result =
     Success storage
