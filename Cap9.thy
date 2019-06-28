@@ -506,9 +506,7 @@ text \<open>Before we proceed some common notation that would be used later will
 
 subsubsection \<open>Machine words\<close>
 
-text \<open>
-  Procedure keys are represented as 24-byte (192 bits) machine words.
-\<close>
+text \<open>Procedure keys are represented as 24-byte (192 bits) machine words.\<close>
 
 type_synonym word24 = "192 word" \<comment> \<open>24 bytes\<close>
 type_synonym key = word24
@@ -1963,29 +1961,52 @@ record kernel =
   proc_list  :: procedure_list
 
 text \<open>
-  Here we introduce some useful abbreviations that will simplify the expression of the kernel
-  state properties.
+  Here we introduce some useful abbreviations and definitions that will simplify the high-level
+  expression of the kernel state properties.
+
+  @{text nprocs} returns the number of the procedures registered in the kernel. @{text \<sigma>} is a
+  parameter that refers to the state of the kernel storage.
 \<close>
 
-text \<open>Number of the procedures:\<close>
 abbreviation "nprocs \<sigma> \<equiv> size \<lfloor>proc_list \<sigma>\<rfloor>"
 
-text \<open>Set of procedure indexes:\<close>
+text \<open>Function that returns set of all current procedure indexes.\<close>
+
 definition "proc_ids \<sigma> \<equiv> {0..<nprocs \<sigma>}"
+
+text \<open>
+  @{text procs} returns map of procedure keys and corresponding procedures. This is an
+  alternative representation of an association list @{text procedure_list} described above.
+  Note that not all keys contain procedures.
+\<close>
 
 abbreviation "procs \<sigma> \<equiv> DAList.lookup \<lfloor>proc_list \<sigma>\<rfloor>"
 
+text \<open>
+  Auxiliary function that returns true if and only if a procedure with the key @{text k} is
+  registered in the state @{text \<sigma>}.
+ \<close>
+
 definition "has_key k \<sigma> \<equiv> k \<in> dom (procs \<sigma>)"
 
-text \<open>Procedure by its key:\<close>
+text \<open>
+  @{text proc} returns the procedure by its key. Can be used only if @{text "has_key k \<sigma> = True"}.
+\<close>
 
 definition "proc \<sigma> k \<equiv> the (procs \<sigma> k)"
 
+text \<open>@{text proc_key} returns the procedure key by its index in the procedure list.\<close>
+
 abbreviation "proc_key \<sigma> i \<equiv> fst (\<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor> ! i)"
 
-text \<open>Index of procedure:\<close>
+text \<open>@{text proc_id} returns the procedure index in the procedure list by its key.\<close>
 
 definition "proc_id \<sigma> k \<equiv> \<lceil>length (takeWhile ((\<noteq>) k \<circ> fst) \<lfloor>\<lfloor>proc_list \<sigma>\<rfloor>\<rfloor>)\<rceil> :: key_index"
+
+text \<open>
+  @{text proc_id} always returns the procedure index that exists in the current state. Given that
+  index the correct corresponding procedure can be found in the procedure list.
+\<close>
 
 lemma proc_id_alt[simp]:
   "has_key k \<sigma> \<Longrightarrow> \<lfloor>proc_id \<sigma> k\<rfloor> \<in> proc_ids \<sigma>"
@@ -2026,7 +2047,7 @@ proof-
     by (auto intro:prod_eqI)
 qed
 
-text \<open>Low-level representation of the kernel storage is a 256 x 256 bits key-value store. \<close>
+text \<open>Low-level representation of the kernel storage is a 256 x 256 bits key-value store.\<close>
 
 definition "kernel_rep (\<sigma> :: kernel) r a \<equiv>
   case \<lceil>a\<rceil> of
@@ -2042,6 +2063,12 @@ definition "kernel_rep (\<sigma> :: kernel) r a \<equiv>
                          else r a)"
 
 adhoc_overloading rep kernel_rep
+
+text \<open>
+  If the number of procedures in two kernel states is the same, procedure keys that can be found
+  by the same index in two corresponding procedure lists are the same, and for each such procedure
+  key its data is also the same in both states, then procedure lists in both states are equal.
+\<close>
 
 lemma proc_list_eqI[intro]:
   assumes "nprocs \<sigma>\<^sub>1 = nprocs \<sigma>\<^sub>2"
@@ -2116,6 +2143,8 @@ proof-
 qed
 
 section \<open>Call formats\<close>
+
+text \<open>Here we describe formats of all available system calls.\<close>
 
 primrec split :: "'a::len word list \<Rightarrow> 'b::len word list list" where
   "split []       = []" |
@@ -2192,6 +2221,12 @@ end
 
 subsection \<open>Register system call\<close>
 
+text \<open>
+  Definition of well-formedness for capability @{text l} (represented as a 32-byte machine word
+  list) of type @{text c}. @{text l} must be correctly formatted to be correctly decoded into
+  the more high-level representation.
+\<close>
+
 definition "wf_cap c l \<equiv>
   case (c, l) of
     (Call,  [c])      \<Rightarrow> (\<lceil>c\<rceil> :: prefixed_capability option) \<noteq> None
@@ -2203,9 +2238,19 @@ definition "wf_cap c l \<equiv>
   | (Send,  [c])      \<Rightarrow> (\<lceil>c\<rceil> :: external_call_capability option) \<noteq> None
   | _                 \<Rightarrow> False"
 
+text \<open>
+  If some capability @{text l} of the type @{text c} is well-formed, then the length of l
+  (word list) is smaller or equal to 5.
+\<close>
+
 lemma length_wf_cap[dest]: "wf_cap c l \<Longrightarrow> length l \<le> 5"
   unfolding wf_cap_def using log_cap_rep'
   by (auto split:capability.splits list.splits)
+
+text \<open>
+  Capabilities @{text l\<^sub>1} and @{text l\<^sub>2} of the type @{text c} are the same if their high-level
+  representation are the same.
+\<close>
 
 definition "same_cap c l\<^sub>1 l\<^sub>2 \<equiv>
   case (c, l\<^sub>1, l\<^sub>2) of
@@ -2217,6 +2262,13 @@ definition "same_cap c l\<^sub>1 l\<^sub>2 \<equiv>
   | (Log,   c\<^sub>1,   c\<^sub>2)               \<Rightarrow> the \<lceil>c\<^sub>1\<rceil> = (the \<lceil>c\<^sub>2\<rceil> :: log_capability)
   | (Send,  [c\<^sub>1], [c\<^sub>2])             \<Rightarrow> the \<lceil>c\<^sub>1\<rceil> = (the \<lceil>c\<^sub>2\<rceil> :: external_call_capability)
   |  _                              \<Rightarrow> False"
+
+text \<open>
+  Some capability formats have undefined bits or bytes. Here we define function that takes
+  capability @{text l} of the type @{text c} and writes it over some 32-byte machine word list
+  @{text r} in such a way that these undefined parts will contain corresponding parts from
+  @{text r}.
+\<close>
 
 definition "overwrite_cap c l r \<equiv>
   case (c, l) of
@@ -2230,11 +2282,21 @@ definition "overwrite_cap c l r \<equiv>
   | (Log,   c)          \<Rightarrow> \<lfloor>the \<lceil>c\<rceil> :: log_capability\<rfloor>
   | (Send,  [c])        \<Rightarrow> [\<lfloor>the \<lceil>c\<rceil> :: external_call_capability\<rfloor> (r ! 0)]"
 
+text \<open>
+  If some capability @{text l} of the type @{text c} is well-wormed, then the result of its writing
+  over a 32-byte machine word list @{text r} will also be well-formed.
+\<close>
+
 lemma overwrite_cap_wf: "wf_cap c l \<Longrightarrow> wf_cap c (overwrite_cap c l r)"
   unfolding wf_cap_def overwrite_cap_def
   by (auto split:capability.splits list.splits simp add:write_cap_inv.inv_inj')
 
 abbreviation "zero_fill l \<equiv> replicate (length l) 0"
+
+text \<open>
+  Writing two equal capabilities over 32-byte machine word list filled with zeroes will produce the
+  same result.
+\<close>
 
 lemma same_cap_inj[dest]:
   "same_cap c l\<^sub>1 l\<^sub>2 \<Longrightarrow> overwrite_cap c l\<^sub>1 (zero_fill l\<^sub>1) = overwrite_cap c l\<^sub>2 (zero_fill l\<^sub>2)"
@@ -2242,25 +2304,47 @@ lemma same_cap_inj[dest]:
   by (simp split:capability.splits)
      (auto split:capability.splits list.splits)+
 
+text \<open>
+  If the result of writing capability @{text l\<^sub>1} over @{text r\<^sub>1} is equal to the result of writing
+  @{text l\<^sub>2} over @{text r\<^sub>2}, and both these capabilities are well-formed, then they are the same.
+\<close>
+
 lemma overwrite_cap_inj[dest]:
   "\<lbrakk>overwrite_cap c l\<^sub>1 r\<^sub>1 = overwrite_cap c l\<^sub>2 r\<^sub>2; wf_cap c l\<^sub>1; wf_cap c l\<^sub>2\<rbrakk> \<Longrightarrow> same_cap c l\<^sub>1 l\<^sub>2"
   unfolding wf_cap_def overwrite_cap_def same_cap_def
   by (simp split:capability.splits)
     (auto split:capability.splits list.splits simp add:write_cap_inv.inv_inj')
 
+text \<open>Writing well-formed capability over some machine word list some does not change its length.\<close>
+
 lemma length_overwrite_cap[simp]: "wf_cap c l \<Longrightarrow> length (overwrite_cap c l r) = length l"
   unfolding wf_cap_def overwrite_cap_def
   by (auto split:capability.splits list.split prod.split)
 
+text \<open>
+  Introduce type the described capability data as sent in the Register Procedure system call.
+  It is represented as a list of elements, each of which contains some capability type, capability
+  index, and well-formed capability itself.
+\<close>
+
 typedef capability_data =
   "{ l :: ((capability \<times> capability_index) \<times> word32 list) list.
-       \<forall> ((c, _), l) \<in> set l. wf_cap c l \<and> l = overwrite_cap c l (replicate (length l) 0) }"
+       \<forall> ((c, _), l) \<in> set l. wf_cap c l \<and> l = overwrite_cap c l (zero_fill l) }"
   morphisms cap_data_rep' cap_data
   by (intro exI[of _ "[]"], simp)
 
 adhoc_overloading rep cap_data_rep'
 
 adhoc_overloading abs cap_data
+
+text \<open>
+  Data format of the Register Procedure system call is modeled as a record with three fields:
+  \begin{itemize}
+    \item @{text proc_key}: procedure key;
+    \item @{text eth_addr}: procedure Ethereum address;
+    \item @{text cap_data}: a series of capabilities, and each one is in the format specified above.
+  \end{itemize}
+\<close>
 
 record register_call_data =
   proc_key :: key
@@ -2271,14 +2355,25 @@ no_adhoc_overloading rep cap_index_rep
 
 no_adhoc_overloading abs cap_index_inv.inv
 
+text \<open>
+  Redefine low-level representation of capability index. Previously it started with 1, but in the
+  call data format it should start with 0.
+\<close>
+
 definition "cap_index_rep0 i \<equiv> of_nat \<lfloor>i\<rfloor> :: byte" for i :: capability_index
 
 adhoc_overloading rep cap_index_rep0
+
+text \<open>
+  A single byte is sufficient to store the least number of bits of capability index representation.
+\<close>
 
 lemma width_cap_index0: "width \<lfloor>i\<rfloor> \<le> LENGTH(byte)" for i :: capability_index by simp
 
 lemma width_cap_index0'[simp]: "LENGTH(byte) \<le> n \<Longrightarrow> width \<lfloor>i\<rfloor> \<le> n"
   for i :: capability_index by simp
+
+text \<open>Capability index representation is injective.\<close>
 
 lemma cap_index_inj0[simp]: "(\<lfloor>i\<^sub>1\<rfloor> :: byte) = \<lfloor>i\<^sub>2\<rfloor> \<Longrightarrow> i\<^sub>1 = i\<^sub>2" for i\<^sub>1 i\<^sub>2 :: capability_index
   unfolding cap_index_rep0_def
@@ -2286,20 +2381,41 @@ lemma cap_index_inj0[simp]: "(\<lfloor>i\<^sub>1\<rfloor> :: byte) = \<lfloor>i\
         cap_index_rep'_inject
   by force
 
+text \<open>Representation function is invertible.\<close>
+
 lemmas cap_index0_invertible[intro] = invertible.intro[OF injI, OF cap_index_inj0]
 
 interpretation cap_index_inv0: invertible cap_index_rep0 ..
 
 adhoc_overloading abs cap_index_inv0.inv
 
-abbreviation "cap_data_rep_single r (c :: capability) (i :: capability_index) l j d \<equiv>
+text \<open>
+  Low-level representation of a single element from the capability data list. It starts with the
+  number of 32-byte machine words associated with the capability, which is 3 + the length of the
+  capability, and stored in a byte aligned right in the 32 bytes. Then there is the type of the
+  capability and the index into the capability list of this type for the current procedure,
+  both of which are also represented as bytes aligned right in the 32 bytes. And finally there is
+  the capability itself as a 32-byte machine word list.
+\<close>
+
+abbreviation "cap_data_rep_single r (c :: capability) (i :: capability_index) l j \<equiv>
   [ucast (of_nat (3 + length l) :: byte) OR (r ! j) \<restriction> {LENGTH(byte) ..<LENGTH(word32)},
    ucast \<lfloor>c\<rfloor> OR (r ! (j + 1)) \<restriction> {LENGTH(byte) ..<LENGTH(word32)},
    ucast \<lfloor>i\<rfloor> OR (r ! (j + 2)) \<restriction> {LENGTH(byte) ..<LENGTH(word32)}]
   @ overwrite_cap c l (drop (j + 3) r)"
 
+text \<open>
+  Auxiliary function that will be applied to each element from the capability data list to get its
+  low-level representation.
+\<close>
+
 definition "cap_data_rep0 r \<equiv>
-  \<lambda> ((c, i), l) (j, d). (j + 3 + length l, cap_data_rep_single r c i l j d # d)"
+  \<lambda> ((c, i), l) (j, d). (j + 3 + length l, cap_data_rep_single r c i l j # d)"
+
+text \<open>
+  Length of each element from the capability data list is correctly stored in the element itself
+  in its head (since the element is also a list).
+\<close>
 
 lemma length_cap_data_rep0:
   fixes d :: capability_data
@@ -2309,36 +2425,31 @@ proof-
   from assms(2) have "wf_cap c l" using cap_data_rep'[of d] by auto
   with assms(1) show ?thesis
     unfolding cap_data_rep0_def
-    by (auto split:prod.splits simp add:unat_ucast_upcast unat_of_nat_eq)
-      (auto simp add:unat_of_nat_eq)
+    by (force split:prod.splits simp add:unat_ucast_upcast unat_of_nat_eq)
 qed
 
 lemma length_cap_data_rep0':
   "\<lbrakk>[l] = snd (cap_data_rep0 r x acc); x \<in> set \<lfloor>d\<rfloor>\<rbrakk> \<Longrightarrow>
-    length l = unat (hd l AND mask LENGTH(byte))"
+     length l = unat (hd l AND mask LENGTH(byte))"
   (is "\<lbrakk>?l; ?in_set\<rbrakk> \<Longrightarrow> _")
   for d :: capability_data
 proof-
   assume ?l and ?in_set
-  obtain c i l' j ls
-    where "cap_data_rep0 r ((c, i), l') acc = (j, l # ls)"
+  obtain c i l' j
+    where "cap_data_rep0 r ((c, i), l') acc = (j, l # [])"
       and "((c, i), l') \<in> set \<lfloor>d\<rfloor>"
-  proof (cases "cap_data_rep0 r x acc")
-    fix j lls
-    assume 0:"cap_data_rep0 r x acc = (j, lls)"
-    with \<open>?l\<close> have 1:"lls = l # []" by (metis snd_conv)
-    from \<open>?l\<close> show ?thesis proof (cases x)
-      fix ci l'
-      assume 2:"x = (ci, l')"
-      show ?thesis proof (cases ci)
-        fix c i
-        assume "ci = (c, i)"
-        with that[of c i l' j "[]"] 0 1 2 \<open>?in_set\<close> \<open>?l\<close> show ?thesis by simp
-      qed
-    qed
+  proof (cases "cap_data_rep0 r x acc", cases x, cases "fst x")
+    fix c i l' j ci ls
+    assume "cap_data_rep0 r x acc = (j, ls)" and "x = (ci, l')" and "fst x = (c, i)"
+    with that[of c i l' j] \<open>?in_set\<close> \<open>?l\<close> show ?thesis by simp
   qed
   thus ?thesis using length_cap_data_rep0 by simp
 qed
+
+text \<open>
+  Low-level representation of the capability data list is achieved by applying the
+  @{text "cap_data_rep0"} function to each element of the list.
+\<close>
 
 definition "cap_data_rep (d :: capability_data) r \<equiv> fold (cap_data_rep0 r) \<lfloor>d\<rfloor>"
 
@@ -2346,23 +2457,28 @@ lemma cap_data_rep'_tail: "\<lfloor>d\<rfloor> = x # xs \<Longrightarrow> xs = \
   using cap_data_rep'[of d]
   by (auto intro:cap_data_inverse[symmetric])
 
+lemma length_snd_fold_cap_data_rep0:
+  "length (snd (fold (cap_data_rep0 r) xs i)) = length xs + length (snd i)"
+  unfolding cap_data_rep0_def by (induction xs arbitrary: i, simp_all split:prod.split)
+
 lemma length_snd_cap_data_rep[simp]:
   "length (snd (cap_data_rep d r i)) = length \<lfloor>d\<rfloor> + length (snd i)"
-proof (induction "\<lfloor>d\<rfloor>" arbitrary:d)
-  case Nil
-  thus ?case unfolding cap_data_rep_def by simp
-next
-  {
-    fix r xs i
-    have "length (snd (fold (cap_data_rep0 r) xs i)) = length xs + length (snd i)"
-      unfolding cap_data_rep0_def by (induction xs arbitrary: i, simp_all split:prod.split)
-  } note [simp] = this
-  case (Cons x xs)
-  from Cons.hyps(1)[of "\<lceil>xs\<rceil>"] show ?case
-    unfolding cap_data_rep_def  using cap_data_rep'_tail
-    by ((subst Cons.hyps(2)[symmetric])+, simp split:prod.splits)
-      (simp add:cap_data_rep0_def split:prod.splits)
-qed
+  unfolding cap_data_rep_def by (simp add:length_snd_fold_cap_data_rep0)
+
+text \<open>
+  First we prove injectivity of "extended" capability data representation, i.e. for capability
+  data represented as a list of separate lists (of 32-byte words), each corresponding to a
+  low-level representation of one capability. The outer list is paired with the total length of
+  the representations. This directly corresponds
+  to the result of @{const "cap_data_rep"}. However, to obtain the actual representation,
+  we later take only the list of lists out from this result (no total length),
+  then reverse and concatenate it.
+  So this lemma is not enough to show the overall injectivity of the representation, but
+  in the following we reduce overall injectivity to this intermediate result. We do this by
+  proving that the total length is unambiguously recoverable from the resulting lists and that
+  the resulting list of lists can be recovered from the concatenated list due to the lengths
+  encoded in the initial 32-byte words.
+\<close>
 
 lemma cap_data_rep_inj[dest]:
   "\<lbrakk>cap_data_rep d\<^sub>1 r\<^sub>1 i\<^sub>1 = cap_data_rep d\<^sub>2 r\<^sub>2 i\<^sub>2; length (snd i\<^sub>1) = length (snd i\<^sub>2)\<rbrakk> \<Longrightarrow> d\<^sub>1 = d\<^sub>2"
@@ -2386,8 +2502,8 @@ next
   note d\<^sub>2 = \<open>\<lfloor>d\<^sub>2\<rfloor> = y # ys\<close>
   from \<open>?eq_rep d\<^sub>1 i\<^sub>1 d\<^sub>2 i\<^sub>2\<close> obtain i\<^sub>1' and i\<^sub>2'
     where "cap_data_rep \<lceil>xs\<rceil> r\<^sub>1 i\<^sub>1' = cap_data_rep \<lceil>ys\<rceil> r\<^sub>2 i\<^sub>2'"
-      and   "length (snd i\<^sub>1') = length (snd i\<^sub>1) + 1"
-      and   "length (snd i\<^sub>2') = length (snd i\<^sub>2) + 1"
+      and "length (snd i\<^sub>1') = length (snd i\<^sub>1) + 1"
+      and "length (snd i\<^sub>2') = length (snd i\<^sub>2) + 1"
     unfolding cap_data_rep_def cap_data_rep0_def
     using cap_data_rep'_tail[OF d\<^sub>2] cap_data_rep'_tail[OF d\<^sub>1]
     by (auto simp add:d\<^sub>1 d\<^sub>2 split:prod.split)
@@ -2399,7 +2515,7 @@ next
     by auto (metis inj prod.collapse)
   moreover have "wf_cap (fst (fst x)) (snd x)" and  "wf_cap (fst (fst y)) (snd y)"
     using cap_data_rep'[of d\<^sub>1] d\<^sub>1 cap_data_rep'[of d\<^sub>2]  d\<^sub>2
-   by auto
+    by auto
   ultimately have "x = y" unfolding cap_data_rep0_def
     apply (auto split:prod.splits
         del:cap_type_rep_inj overwrite_cap_inj
@@ -2409,6 +2525,11 @@ next
   with tls d\<^sub>1 d\<^sub>2 have "\<lfloor>d\<^sub>1\<rfloor> = \<lfloor>d\<^sub>2\<rfloor>" by simp
   thus ?case by (simp add:cap_data_rep'_inject)
 qed
+
+text \<open>
+  Helper lemma for induction base proofs. Since @{prop "concat a = []"} implies
+  @{prop "\<forall> x \<in> set a. x = []"}, to obtain @{prop "a = []"} we need this lemma.
+\<close>
 
 lemma cap_data_rep_lengths:
   "list_all ((\<noteq>) []) l \<Longrightarrow> list_all ((\<noteq>) []) (snd (cap_data_rep d r (i, l)))"
@@ -2425,10 +2546,15 @@ next
     by (rewrite in \<open>_ # _ = \<lfloor>d\<rfloor>\<close> in asm eq_commute) auto
 qed
 
+text \<open>
+  Now proving that the total length is unambiguously recoverable from the length of
+  the resulting lists (and the initial total length in the general case).
+\<close>
+
 lemma cap_data_rep_index[simp]:
   assumes "sum_list (map length l) \<le> i"
-  shows "fst (cap_data_rep d r (i, l)) =
-         sum_list (map length (snd (cap_data_rep d r (i, l)))) + (i - sum_list (map length l))"
+  shows   "fst (cap_data_rep d r (i, l)) =
+           sum_list (map length (snd (cap_data_rep d r (i, l)))) + (i - sum_list (map length l))"
   using assms
 proof (induction "\<lfloor>d\<rfloor>" arbitrary:d i l)
   case Nil
@@ -2455,7 +2581,7 @@ lemma cap_data_rep_dest:
   assumes "snd (cap_data_rep d r (i, [])) \<noteq> []"
   obtains i' where
     "snd (cap_data_rep d r (i, l)) =
-   hd (snd (cap_data_rep0 r (last \<lfloor>d\<rfloor>) (i', []))) # snd (cap_data_rep \<lceil>butlast \<lfloor>d\<rfloor>\<rceil> r (i, l))"
+     hd (snd (cap_data_rep0 r (last \<lfloor>d\<rfloor>) (i', []))) # snd (cap_data_rep \<lceil>butlast \<lfloor>d\<rfloor>\<rceil> r (i, l))"
   using assms(1)
 proof (induction "\<lfloor>d\<rfloor>" arbitrary:d i l ?thesis)
   case Nil
@@ -2506,8 +2632,17 @@ next
   qed
 qed
 
+text \<open>
+  Now we need to prove that the list of lists resulting from @{const "cap_data_rep"} can be
+  recovered from its reversed and concatenated representation. This is quite hard to do directly,
+  so we introduce an intermediate definition @{text "cap_data_rep1"}, prove the
+  bijective correspondence between it and @{const "cap_data_rep"}, then prove injectivity for
+  concatenation of @{text "cap_data_rep1"} and use it to prove that the initial list of lists
+  is recoverable.
+\<close>
+
 definition "cap_data_rep1 r \<equiv>
-  \<lambda> ((c, i), l) (j, d). (j + 3 + length l, d @ [cap_data_rep_single r c i l j d])"
+  \<lambda> ((c, i), l) (j, d). (j + 3 + length l, d @ [cap_data_rep_single r c i l j])"
 
 lemma cap_data_rep1_fold_pull[simp]:
   "snd (fold (cap_data_rep1 r) d (i, x # xs)) = x # snd (fold (cap_data_rep1 r) d (i, xs))"
@@ -2522,6 +2657,10 @@ next
     unfolding cap_data_rep1_def by (induction d) auto
   with Cons(1)[of i' "xs @ xs'"] show ?case by simp
 qed
+
+text \<open>
+ Proving bijective correspondence between @{const "cap_data_rep"} and @{const "cap_data_rep1"}.
+\<close>
 
 lemma cap_data_rep_rel:
   "rev (snd (cap_data_rep d r (i, l))) = rev l @ snd (fold (cap_data_rep1 r) \<lfloor>d\<rfloor> (i, []))"
@@ -2544,9 +2683,12 @@ next
     (fst (cap_data_rep0 r x (i, [])), snd (cap_data_rep0 r x (i, [])) @ l)"
     unfolding cap_data_rep0_def by (simp split:prod.split)
   from Cons(1)[of "\<lceil>xs\<rceil>" ?i' ?l', OF xs[symmetric]] xs
-  show ?case unfolding cap_data_rep_def
-    by (simp add: Cons(2)[symmetric] 0 1)
+  show ?case unfolding cap_data_rep_def by (simp add: Cons(2)[symmetric] 0 1)
 qed
+
+text \<open>
+  Prove that we can recover result of @{const "cap_data_rep1"} from its concatenation.
+\<close>
 
 lemma concat_cap_data_rep_inj_snd[dest]:
   fixes d\<^sub>1' d\<^sub>2' :: capability_data
@@ -2576,10 +2718,9 @@ next
     unfolding cap_data_rep1_def by (induction x) auto
   have
     l:"concat (snd (fold (cap_data_rep1 r\<^sub>1) (x # xs) (i\<^sub>1, []))) =
-     l\<^sub>1' @ concat (snd (fold (cap_data_rep1 r\<^sub>1) xs (i\<^sub>1', [])))"
+       l\<^sub>1' @ concat (snd (fold (cap_data_rep1 r\<^sub>1) xs (i\<^sub>1', [])))"
     by (simp add:0)
-  from Cons(2) have "snd (fold (cap_data_rep1 r\<^sub>2) d\<^sub>2 (i\<^sub>2, [])) \<noteq> []"
-    by (auto simp add:0 1)
+  from Cons(2) have "snd (fold (cap_data_rep1 r\<^sub>2) d\<^sub>2 (i\<^sub>2, [])) \<noteq> []" by (auto simp add:0 1)
   hence "d\<^sub>2 \<noteq> []" by auto
   then obtain y ys where 3:"d\<^sub>2 = y # ys" by (cases d\<^sub>2, auto)
   obtain i\<^sub>2' l\<^sub>2' where
@@ -2603,7 +2744,8 @@ next
   from Cons(2) l r 1 5 9 12 have 13:"l\<^sub>1' = l\<^sub>2'" by (metis append_eq_append_conv hd_append2)
   with Cons(2) l r
   have 14:"concat (snd (fold (cap_data_rep1 r\<^sub>1) xs (i\<^sub>1', []))) =
-           concat (snd (fold (cap_data_rep1 r\<^sub>2) ys (i\<^sub>2', [])))" by simp
+           concat (snd (fold (cap_data_rep1 r\<^sub>2) ys (i\<^sub>2', [])))"
+    by simp
 
   note xs = cap_data_rep'_tail[OF Cons(3)[symmetric]]
   from cap_data_rep'_tail[of d\<^sub>2'] Cons(4) 3 have ys:"ys = \<lfloor>\<lceil>ys\<rceil>\<rfloor>" by blast
@@ -2611,6 +2753,8 @@ next
 
   from 0 3 4 13 15 show ?case by simp
 qed
+
+text \<open>Final injectivity proof for capability data representation:\<close>
 
 lemma concat_cap_data_rep_inj[simplified, dest]:
   "(concat \<circ> rev \<circ> snd) (cap_data_rep d\<^sub>1 r\<^sub>1 (i, [])) =
@@ -2631,7 +2775,7 @@ proof
     by simp
 qed
 
-definition "reg_call_rep d r \<equiv>
+definition "reg_call_rep (d :: register_call_data) r \<equiv>
     [ucast (proc_key d) OR (r ! 0) \<restriction> {LENGTH(key) ..<LENGTH(word32)},
      ucast (eth_addr d) OR (r ! 1) \<restriction> {LENGTH(ethereum_address) ..<LENGTH(word32)}] @
      ((concat \<circ> rev \<circ> snd) (cap_data_rep (cap_data d) r (2, [])))"
@@ -2647,6 +2791,204 @@ proof (rule register_call_data.equality)
 
   from eq show "cap_data d\<^sub>1 = cap_data d\<^sub>2" unfolding reg_call_rep_def by auto
 qed simp
+
+lemmas reg_call_invertible[intro] = invertible2.intro[OF inj2I, OF reg_call_rep_inj]
+
+interpretation reg_call_inv: invertible2 reg_call_rep ..
+
+adhoc_overloading abs reg_call_inv.inv2
+
+subsection \<open>Procedure call system call\<close>
+
+type_synonym procedure_call_data = "(key \<times> byte list)"
+
+definition "proc_call_rep (cd :: procedure_call_data) (r :: byte list) \<equiv>
+  let (k, d) = cd;
+       r' = word_rcat (take (LENGTH(word32) div LENGTH(byte)) r) :: word32 in
+  word_rsplit (ucast k OR r' \<restriction> {LENGTH(key) ..<LENGTH(word32)}) @ d"
+
+adhoc_overloading rep proc_call_rep
+
+lemma word_rsplit_inj[dest]: "word_rsplit a = word_rsplit b \<Longrightarrow> a = b" for a::"'a::len word"
+  by (auto dest:arg_cong[where f="word_rcat :: _ \<Rightarrow> 'a word"] simp add:word_rcat_rsplit)
+
+lemma proc_call_rep_inj[dest]: "\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>d\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: procedure_call_data
+proof-
+  let "?key_rep k r" =
+    "word_rsplit (ucast (k :: key) OR (r :: word32) \<restriction> {LENGTH(key) ..<LENGTH(word32)})
+     :: byte list"
+  assume "\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>d\<^sub>2\<rfloor> r\<^sub>2"
+  moreover then obtain k\<^sub>1 d\<^sub>1' and r\<^sub>1' :: word32 and k\<^sub>2 d\<^sub>2' and r\<^sub>2' :: word32 where
+    "\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1 = ?key_rep k\<^sub>1 r\<^sub>1' @ d\<^sub>1'" "\<lfloor>d\<^sub>2\<rfloor> r\<^sub>2 = ?key_rep k\<^sub>2 r\<^sub>2' @ d\<^sub>2'" and
+    d\<^sub>1:"(k\<^sub>1, d\<^sub>1') = d\<^sub>1" and d\<^sub>2:"(k\<^sub>2, d\<^sub>2') = d\<^sub>2"
+    unfolding proc_call_rep_def
+    by (simp add: Let_def split:prod.splits, metis)
+  moreover have "length (?key_rep k\<^sub>1 r\<^sub>1') = length (?key_rep k\<^sub>2 r\<^sub>2')"
+    by (rule word_rsplit_len_indep)
+  ultimately have "?key_rep k\<^sub>1 r\<^sub>1' = ?key_rep k\<^sub>2 r\<^sub>2'" and "d\<^sub>1' = d\<^sub>2'" by auto
+  with d\<^sub>1 and d\<^sub>2 show ?thesis by auto
+qed
+
+lemmas proc_call_invertible[intro] = invertible2.intro[OF inj2I, OF proc_call_rep_inj]
+
+interpretation proc_call_inv: invertible2 proc_call_rep ..
+
+adhoc_overloading abs proc_call_inv.inv2
+
+subsection \<open>External call system call\<close>
+
+record external_call_data =
+  addr   :: ethereum_address
+  amount :: word32
+  data   :: "byte list"
+
+definition "ext_call_rep (d :: external_call_data) (r :: byte list) \<equiv>
+  let r' = word_rcat (take (LENGTH(word32) div LENGTH(byte)) r) :: word32 in
+  concat (split
+    [ucast (addr d) OR r' \<restriction> {LENGTH(ethereum_address) ..<LENGTH(word32)},
+     amount d])
+  @ data d"
+
+adhoc_overloading rep ext_call_rep
+
+lemma ext_call_rep_inj[dest]: "\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>d\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: external_call_data
+proof (rule external_call_data.equality)
+  {
+    fix a\<^sub>1 b\<^sub>1 a\<^sub>2 b\<^sub>2 :: word32 and d\<^sub>1 d\<^sub>2 :: "byte list"
+    assume "concat (split [a\<^sub>1, b\<^sub>1]) @ d\<^sub>1 = concat (split [a\<^sub>2, b\<^sub>2]) @ d\<^sub>2"
+    hence "a\<^sub>1 = a\<^sub>2" and "b\<^sub>1 = b\<^sub>2" by (auto simp add:word_rsplit_len_indep)
+  } note dest[dest] = this
+  assume eq:"\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>d\<^sub>2\<rfloor> r\<^sub>2"
+
+  from eq show "addr d\<^sub>1 = addr d\<^sub>2" unfolding ext_call_rep_def
+    by (auto simp del:concat.simps split.simps)
+  from eq show "amount d\<^sub>1 = amount d\<^sub>2" unfolding ext_call_rep_def by (auto simp only:Let_def)
+  from eq show "data d\<^sub>1 = data d\<^sub>2" unfolding ext_call_rep_def
+    by (auto simp add:word_rsplit_len_indep)
+qed simp
+
+lemmas external_call_invertible[intro] = invertible2.intro[OF inj2I, OF ext_call_rep_inj]
+
+interpretation ext_call_inv: invertible2 ext_call_rep ..
+
+adhoc_overloading abs ext_call_inv.inv2
+
+subsection \<open>Log system call\<close>
+
+type_synonym log_topics = log_capability
+
+type_synonym log_call_data = "log_topics \<times> byte list"
+
+definition "log_call_rep td r \<equiv>
+  let (t, d) = td;
+      n = length \<lfloor>t\<rfloor>;
+      c = LENGTH(word32) div LENGTH(byte);
+      r' = word_rcat (take c (drop (c * (n + 1)) r)) :: word32 in
+  concat (split (\<lfloor>t\<rfloor> @ [r'])) @ d"
+  for td :: log_call_data
+
+adhoc_overloading rep log_call_rep
+
+lemma split_distrib[simp]:"split (a @ b) = split a @ split b" by (induct a, simp_all)
+
+lemma split_length_indep[dest]: "length a = length b \<Longrightarrow> length (split a) = length (split b)"
+proof (induct a arbitrary:b, simp)
+  case (Cons x xs)
+  from Cons(1)[of "tl b"] Cons(2) show ?case by (cases b, simp_all)
+qed
+
+lemma split_concat_length_indep[dest]:
+  "length a = length b \<Longrightarrow>
+   length (concat (split a :: 'b::len word list list)) =
+   length (concat (split b :: 'b::len word list list))"
+  for a b :: "'a::len word list"
+proof (induct a arbitrary:b, simp)
+  case (Cons x xs)
+  from Cons(1)[of "tl b"] Cons(2) show ?case by (cases b, simp_all add:word_rsplit_len_indep)
+qed
+
+lemma split_lengths:
+  "i \<in> set (split (a :: 'a::len word list) :: 'b::len word list list)
+   \<Longrightarrow> length i = (LENGTH('a) + LENGTH('b) - 1) div LENGTH('b)"
+  by (induct a, auto simp add:length_word_rsplit_exp_size')
+
+lemma log_call_rep_inj[dest]: "\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>d\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: log_call_data
+proof
+  {
+    fix a b :: "word32 list" and d\<^sub>1 d\<^sub>2
+    assume "(concat (split a) :: byte list) @ d\<^sub>1 = concat (split b) @ d\<^sub>2"
+      and "length a = length b"
+    hence "a = b"
+      by (intro split_inj, intro concat_injective, auto)
+        (subst (asm) append_eq_append_conv, auto elim:in_set_zipE simp add:split_lengths)
+  } note [dest] = this
+
+  assume eq:"\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>d\<^sub>2\<rfloor> r\<^sub>2"
+  moreover hence "length \<lfloor>fst d\<^sub>1\<rfloor> = length \<lfloor>fst d\<^sub>2\<rfloor>" unfolding log_call_rep_def log_cap_rep_def
+    using log_cap_rep'[of "fst d\<^sub>1"] log_cap_rep'[of "fst d\<^sub>2"]
+    by (auto split:prod.splits simp add:word_rsplit_len_indep of_nat_inj)
+  ultimately show "fst d\<^sub>1 = fst d\<^sub>2" unfolding log_call_rep_def by (auto split:prod.splits)
+
+  with eq show "snd d\<^sub>1 = snd d\<^sub>2" unfolding log_call_rep_def
+    by (auto split:prod.splits simp add:word_rsplit_len_indep)
+qed
+
+lemmas log_call_invertible[intro] = invertible2.intro[OF inj2I, OF log_call_rep_inj]
+
+interpretation log_call_inv: invertible2 log_call_rep ..
+
+adhoc_overloading abs log_call_inv.inv2
+
+subsection \<open>Delete and Set entry system calls\<close>
+
+type_synonym delete_call_data = key
+
+type_synonym set_entry_call_data = key
+
+definition "proc_key_call_rep k r = [ucast k OR r \<restriction> {LENGTH(key) ..<LENGTH(word32)}]"
+  for k :: key and r :: word32
+
+adhoc_overloading rep proc_key_call_rep
+
+lemma proc_key_call_rep_inj0[dest]: "\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>d\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: key
+  unfolding proc_key_call_rep_def by auto
+
+lemma proc_key_call_rep_length[simp]: "length (\<lfloor>d\<rfloor> r) = 1" for d :: key
+  unfolding proc_key_call_rep_def by simp
+
+lemma proc_key_call_rep_inj[dest]: "prefix (\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1) (\<lfloor>d\<^sub>2\<rfloor> r\<^sub>2) \<Longrightarrow> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: key
+  unfolding prefix_def using proc_key_call_rep_length
+  by (subst (asm) append_Nil2[symmetric]) (subst (asm) append_eq_append_conv, auto)
+
+lemma proc_key_call_rep_indep: "length (\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1) = length (\<lfloor>d\<^sub>2\<rfloor> r\<^sub>2)" for d\<^sub>1 d\<^sub>2 :: key by simp
+
+lemmas proc_key_call_invertible[intro] =
+  invertible2_tf.intro[OF inj2_tfI, OF proc_key_call_rep_inj proc_key_call_rep_indep]
+
+interpretation proc_key_call_inv: invertible2_tf proc_key_call_rep ..
+
+adhoc_overloading abs proc_key_call_inv.inv2_tf
+
+subsection \<open>Write system call\<close>
+
+type_synonym write_call_data = "word32 \<times> word32"
+
+definition "write_call_rep w _ \<equiv> let (a, v) = w in [a, v]" for w :: write_call_data
+
+adhoc_overloading rep write_call_rep
+
+lemma write_call_rep_inj[dest]: "prefix (\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1) (\<lfloor>d\<^sub>2\<rfloor> r\<^sub>2) \<Longrightarrow> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: write_call_data
+  unfolding write_call_rep_def by (simp split:prod.splits)
+
+lemma write_call_rep_indep: "length (\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1) = length (\<lfloor>d\<^sub>2\<rfloor> r\<^sub>2)" for d\<^sub>1 d\<^sub>2 :: write_call_data
+  unfolding write_call_rep_def by (simp split:prod.split)
+
+lemmas write_call_invertible[intro] =
+  invertible2_tf.intro[OF inj2_tfI, OF write_call_rep_inj write_call_rep_indep]
+
+interpretation write_call_inv: invertible2_tf write_call_rep ..
+
+adhoc_overloading abs write_call_inv.inv2_tf
 
 datatype result =
     Success storage
@@ -2707,746 +3049,4 @@ definition execute :: "byte list \<Rightarrow> storage \<Rightarrow> result \<ti
        | Log         \<Rightarrow> log ci c s
        | Send        \<Rightarrow> external ci c s)))"
 
-(*
-text \<open>Storage key that corresponds to the number of procedures in the list:\<close>
-abbreviation nprocs_addr ("@nprocs") where "nprocs_addr \<equiv> 0xffffffff01 0...0 :: word32"
-
-lemma "width (0xffffffff01 :: word32) = 5 * 8 " unfolding width_def Least_def
-  apply (rule the_equality)
-  apply simp
-
-text \<open>Storage key that corresponds to the procedure key with index i:\<close>
-definition proc_key_addr ("@proc'_key") where "@proc_key i \<equiv> @nprocs OR of_nat i"
-
-text \<open>Procedure index that corresponds to some procedure key address:\<close>
-definition id_of_proc_key_addr ("@proc'_key.id") where "@proc_key.id a \<equiv> unat (@nprocs XOR a)"
-
-text \<open>Maximum number of procedures in the kernel, but in the form of a 32-byte machine word:\<close>
-abbreviation "max_nprocs_word \<equiv> 2 ^ proc_id_len - 1 :: word32"
-
-text \<open>Declare some lemmas as simplification rules:\<close>
-
-
-text \<open>Storage address that corresponds to the procedure heap for a given procedure key:\<close>
-abbreviation "proc_heap_mask \<equiv>  0xffffffff00 << (27 * 8) :: word32"
-definition proc_heap_addr :: "key \<Rightarrow> word32" ("@proc'_heap") where
-  "@proc_heap k \<equiv> proc_heap_mask OR ((ucast k) << (3 * 8))"
-
-text \<open>Storage address that corresponds to the procedure address:\<close>
-definition proc_addr_addr ("@proc'_addr") where "@proc_addr k \<equiv> @proc_heap k"
-
-text \<open>Storage address that corresponds to the procedure index:\<close>
-definition proc_id_addr ("@proc'_id") where "@proc_id k \<equiv> @proc_heap k OR 0x01"
-
-text \<open>Procedure key that corresponds to some procedure index address:\<close>
-definition proc_key_of_id_addr :: "word32 \<Rightarrow> key" ("@proc'_id.key") where
-  "@proc_id.key a \<equiv> ucast (proc_heap_mask XOR a)"
-
-text \<open>Storage address that corresponds to the number of capabilities of type @{text t}:\<close>
-definition ncaps_addr :: "key \<Rightarrow> byte \<Rightarrow> word32" ("@ncaps") where
-  "@ncaps k t \<equiv> @proc_heap k OR (ucast t << 2 * 8)"
-
-text \<open>
-  Storage address that corresponds to the capability of type @{text t},
-  with index @{text "i - 1"},
-  and offset @{text off} into that capability:
-\<close>
-definition proc_cap_addr :: "key \<Rightarrow> byte \<Rightarrow> byte \<Rightarrow> byte \<Rightarrow> word32" ("@proc'_cap") where
-  "@proc_cap k t i off \<equiv> @proc_heap k OR (ucast t << 2 * 8) OR (ucast i << 8) OR ucast off"
-
-subsection \<open>Lemmas\<close>
-
-subsubsection \<open>Auxiliary lemmas about procedure key addresses\<close>
-
-text \<open>Valid procedure id has all zeros in its higher bits.\<close>
-lemma proc_id_high_zeros[simp]:
-  "n \<le> max_nprocs_word \<Longrightarrow> \<forall>i\<in>{proc_id_len..<LENGTH(word32)}. \<not> n !! i"
-  (is "?nbound \<Longrightarrow> \<forall>_ \<in> ?high. _")
-proof
-  fix i
-  assume 0:"i \<in> ?high"
-  from 0 have "2 ^ proc_id_len \<le> (2 :: nat) ^ i" by (simp add: numerals(2))
-  moreover from 0 have "0 < (2 :: word32) ^ i"  by (subst word_2p_lem; simp)
-  ultimately have "2 ^ proc_id_len \<le> (2 :: word32) ^ i"
-    unfolding word_le_def
-    by (subst (asm) of_nat_le_iff[symmetric], simp add:uint_2p)
-  thus "?nbound \<Longrightarrow> \<not> n !! i"
-    unfolding not_def
-    by (intro impI) (drule bang_is_le, unat_arith)
-qed
-
-text \<open>Address of the \# of procedures has all zeros in its lower bits.\<close>
-lemma nprocs_key_low_zeros[simp]: "\<forall>i\<in>{0..<proc_id_len}. \<not> @nprocs !! i"
-  by (subst nth_shiftl, auto)
-
-text \<open>
-  Elimination (generalized split) rule for 32-byte words:
-  a property holds on all bits if and only if it holds on the higher and lower bits.\<close>
-lemma low_high_split:
-   "(\<forall>n. P ((x :: word32) !! n)) =
-    ((\<forall>n\<in>{0..<proc_id_len}. P (x !! n)) \<and>
-     (\<forall>n\<in>{proc_id_len..<LENGTH(word32)}. P (x !! n)) \<and>
-     P False)"
-  (is "?left = ?right")
-proof (intro iffI)
-  have "\<not> x !! size x" using test_bit_size[of x "size x"] by blast
-  hence "?left \<Longrightarrow> P False" by (metis (full_types))
-  thus "?left \<Longrightarrow> ?right" by auto
-
-  show "?right \<Longrightarrow> ?left" using test_bit_size[of x] by force
-qed
-
-text \<open>Computing procedure key address by its id is an invertible operation.\<close>
-lemma id_of_key_addr_inv[simp]:
-   "i \<le> max_nprocs \<Longrightarrow> @proc_key.id (@proc_key i) = i"
-   (is "?ibound \<Longrightarrow> ?rev")
-proof-
-  assume 0:"?ibound"
-  hence 1:"unat (of_nat i :: word32) = i"
-    by (simp add: le_unat_uoi[where z=max_nprocs_word])
-  hence "of_nat i \<le> max_nprocs_word"
-    using 0
-    by (simp add: word_le_nat_alt)
-  hence "@nprocs XOR @nprocs OR (of_nat i) = of_nat i"
-    using nprocs_key_low_zeros proc_id_high_zeros
-    by (auto simp add: word_eq_iff word_ops_nth_size)
-  thus "?rev"
-    using 1
-    unfolding proc_key_addr_def id_of_proc_key_addr_def
-    by simp
-qed
-
-section \<open>Correspondence between abstract and storage states\<close>
-
-text \<open>Number of procedures is stored by the corresponding address (@{text "@nprocs"}).\<close>
-definition "models_nprocs s \<sigma> \<equiv> unat (s @nprocs) = nprocs \<sigma>"
-
-text \<open>Each procedure key @{text k} is stored by the corresponding address
-      (@{term "@proc_key k"}).\<close>
-definition "models_proc_keys s \<sigma> \<equiv>
-  \<forall> k \<in> proc_keys \<sigma>. s (@proc_key (proc_id \<sigma> k)) = ucast k"
-
-text \<open>For each procedure key @{text k} its index is stored by the corresponding address
-      (@{text "@proc_id k"}).\<close>
-definition "models_proc_ids s \<sigma> \<equiv>
-  \<forall> k \<in> proc_keys \<sigma>. unat (s (@proc_id k)) = proc_id \<sigma> k"
-
-text \<open>A storage corresponds to the abstract state
-     if and only if the above properties are satisfied.\<close>
-definition models :: "storage \<Rightarrow> ('p :: proc_class) abs \<Rightarrow> bool" ("_ \<tturnstile> _" [65, 65] 65) where
-  "s \<tturnstile> \<sigma> \<equiv>
-    models_nprocs s \<sigma>
-  \<and> models_proc_keys s \<sigma>
-  \<and> models_proc_ids s \<sigma>"
-
-lemmas models_nprocs = models_def models_nprocs_def
-lemmas models_proc_keys = models_def models_proc_keys_def
-lemmas models_proc_ids = models_def models_proc_ids_def
-
-text \<open>In the following we aim to proof the existence of a storage corresponding to any
-      well-formed abstract state (so that any well-formed abstract state can be encoded
-      and stored). Then prove that the encoding is unambiguous.
-\<close>
-
-subsection \<open>Auxiliary definitions and lemmas\<close>
-
-text \<open>An empty storage:\<close>
-definition "zero_storage (_ :: word32) \<equiv> 0 :: word32"
-
-text \<open>The set of all procedure key addresses:\<close>
-definition proc_key_addrs ("@proc'_keys") where
-  "@proc_keys \<sigma> \<equiv> { @proc_key (proc_id \<sigma> k) | k. k \<in> proc_keys \<sigma> }"
-
-definition proc_id_addrs ("@proc'_ids") where "@proc_ids \<sigma> \<equiv> { @proc_id k | k. k \<in> proc_keys \<sigma> }"
-
-datatype region =
-    Nprocs
-  | Proc_key nat
-  | Proc_heap key
-
-definition "nprocs_range \<equiv> {unat @nprocs}"
-definition "proc_key_range n \<equiv> {unat @nprocs + n}"
-definition "proc_heap_range k \<equiv> {unat (@proc_heap k)..unat (@proc_heap k) + 0xFFFF}"
-
-lemma proc_heap_mask_low_zeros: "\<forall>i\<in>{0..<LENGTH(key) + 3 * 8}. \<not> proc_heap_mask !! i"
-  by (subst nth_shiftl, auto)
-
-lemma proc_key_lshift_high_zeros:
-  "\<forall>i\<in>{LENGTH(key) + 3 * 8..LENGTH(word32)}. \<not> (ucast (k :: key) << (3 * 8) :: word32) !! i"
-  by (auto simp add:nth_shiftl nth_ucast test_bit_bin[of k])
-
-lemma proc_heap_mask_and_key_lshift: "proc_heap_mask AND (ucast (k :: key) << (3 * 8)) = 0"
-  using proc_heap_mask_low_zeros proc_key_lshift_high_zeros
-  by (auto simp add: word_eq_iff word_ao_nth)
-
-lemma proc_heap_range_nat:
-  "a \<in> proc_heap_range k =
-    (let b = unat proc_heap_mask + unat k * 2 ^ (3 * 8) in a \<in> {b..b+0xFFFF})"
-proof-
-  let ?in_range = "\<lambda> x. x < 2 ^ LENGTH(word32)"
-  have "is_up (ucast :: key \<Rightarrow> word32)"
-    unfolding is_up_def source_size_def target_size_def by simp
-  hence 0:"unat (ucast k :: word32) = unat k" unfolding unat_def by (simp add:uint_up_ucast)
-  hence "?in_range (unat (ucast k :: word32) * 2 ^ (3 * 8))" by (unat_arith, simp)
-  with 0 have 1:"unat k * 2 ^ (3 * 8) = unat ((ucast k :: word32) << (3 * 8))"
-    by (simp add:unat_mult_lem shiftl_t2n)
-  have "?in_range (unat proc_heap_mask + unat k * 2 ^ (3 * 8))" by (unat_arith, simp)
-  with 1 have 2:"?in_range (unat proc_heap_mask + unat ((ucast k :: word32) << (3 * 8)))" by simp
-  show ?thesis
-    unfolding proc_heap_range_def proc_heap_addr_def Let_def
-    apply (subst 1)+
-    apply (subst iffD1[OF unat_add_lem 2[unfolded len_word], symmetric])+
-    apply (subst (1 2) word_plus_and_or[symmetric])
-    using word_plus_and_or[symmetric] proc_heap_mask_and_key_lshift by simp
-qed
-
-function region :: "word32 \<Rightarrow> region" where
-  "unat a \<in> nprocs_range \<Longrightarrow> region a = Nprocs"
-| "\<exists> n. unat a \<in> proc_key_range n \<Longrightarrow> region a = Proc_key (THE n. unat a \<in> proc_key_range n)"
-| "\<exists> k. unat a \<in> proc_heap_range k \<Longrightarrow> region a = Proc_heap (THE k. unat a \<in> proc_heap_range k)"
-  unfolding nprocs_range_def proc_key_range_def proc_heap_range_def
-
-
-(* TODO: add some lemmas? *)
-
-text \<open>Procedure id can be converted to a 32-byte word without overflow.\<close>
-lemma proc_id_inv[simp]:
-  "\<lbrakk>\<turnstile> \<sigma>; k \<in> proc_keys \<sigma>\<rbrakk> \<Longrightarrow> unat (of_nat (proc_id \<sigma> k) :: word32) = proc_id \<sigma> k"
-  unfolding procs_rng_wf
-  by (force intro:le_unat_uoi[where z=max_nprocs_word])
-
-text \<open>Moreover, any procedure id is non-zero and bounded by the maximum available id
-      (@{const max_nprocs_word}).\<close>
-lemma proc_id_bounded[intro]:
-  "\<lbrakk>\<turnstile> \<sigma>; k \<in> proc_keys \<sigma>\<rbrakk> \<Longrightarrow> of_nat (proc_id \<sigma> k) \<in> {0<..max_nprocs_word}"
-  by (simp add:word_le_nat_alt word_less_nat_alt, force simp add:procs_rng_wf)
-
-text \<open>Since it's non-zero, any procedure id has a non-zero bit in its lower part.\<close>
-lemma proc_id_low_one:
-  "n \<in> {0<..max_nprocs_word} \<Longrightarrow> \<exists>i\<in>{0..<proc_id_len}. n !! i"
-  (is "?nbound \<Longrightarrow> _")
-proof-
-  assume 0:"?nbound"
-  hence "\<not> ?thesis \<Longrightarrow> n = 0" by (auto simp add:inc_le intro!:word_eqI)
-  moreover from 0 have "n \<noteq> 0" by auto
-  ultimately show ?thesis by auto
-qed
-
-text \<open>And procedure key address is different from the address of the \# of procedures
-      (@{text "@nprocs"}).\<close>
-lemma proc_key_addr_neq_nprocs_key:
-  "n \<in> {0<..max_nprocs_word} \<Longrightarrow> @nprocs OR n \<noteq> @nprocs"
-  (is "?nbound \<Longrightarrow> _")
-proof-
-  assume 0:"?nbound"
-  hence "\<exists> i\<in>{0..<proc_id_len}.(@nprocs !! i \<or> n  !! i) \<noteq> @nprocs !! i"
-    using nprocs_key_low_zeros proc_id_low_one
-    by fast
-  thus ?thesis by (force simp add:word_eq_iff word_ao_nth)
-qed
-
-text \<open>Thus @{text "@nprocs"} doesn't belong to the set of procedure key addresses.\<close>
-lemma nprocs_key_notin_proc_key_addrs: "\<turnstile> \<sigma> \<Longrightarrow> @nprocs \<notin> @proc_keys \<sigma>"
-  using proc_id_bounded proc_key_addr_neq_nprocs_key
-  unfolding proc_key_addrs_def proc_key_addr_def
-  by auto
-
-text \<open>Also procedure index address is different from the address of the \# of procedures
-      (@{text "@nprocs"}).\<close>
-lemma proc_id_addr_neq_nprocs_key: "@proc_id k \<noteq> @nprocs"
-proof
-  have 0: "\<not> @nprocs !! 0" by auto
-  have 1: "@proc_id k !! 0" using lsb0 test_bit_1 unfolding proc_id_addr_def by blast
-  assume "@proc_id k = @nprocs"
-  hence "(@proc_id k !! 0) = (@nprocs !! 0)" by auto
-  thus "False" using 0 1 by auto
-qed
-
-text \<open>Thus @{text "@nprocs"} doesn't belong to the set of procedure index addresses.\<close>
-lemma nprocs_key_notin_proc_id_addrs: "\<turnstile> \<sigma> \<Longrightarrow> @nprocs \<notin> @proc_ids \<sigma>"
-  unfolding proc_id_addrs_def
-proof
-  assume assms: "\<turnstile> \<sigma>" and "@nprocs \<in> {@proc_id k |k. k \<in> proc_keys \<sigma>}"
-  hence "\<exists>k. @nprocs = @proc_id k \<and> k \<in> proc_keys \<sigma>" by blast
-  then obtain k where " @nprocs = @proc_id k \<and> k \<in> proc_keys \<sigma>" by blast
-  thus "False" using proc_id_addr_neq_nprocs_key assms by auto
-qed
-
-text \<open>The function mapping procedure id to the corresponding procedure key
-      (in some abstract state):\<close>
-definition proc_id_inv ("proc'_id\<inverse>") where "proc_id\<inverse> \<sigma> \<equiv> the_inv_into (proc_keys \<sigma>) (proc_id \<sigma>)"
-
-text \<open>Invertibility of computing procedure id (by its key) in any abstract state:\<close>
-lemma proc_key_of_id_inv[simp]: "\<lbrakk>\<turnstile>\<sigma>; k \<in> proc_keys \<sigma>\<rbrakk> \<Longrightarrow> proc_id\<inverse> \<sigma> (proc_id \<sigma> k) = k"
-  unfolding procs_map_wf proc_id_inv_def
-  using the_inv_into_f_f by fastforce
-
-text \<open>For any valid procedure id in any well-formed abstract state there is a procedure key that
-     corresponds to the id (this is not so trivial as we keep the reverse mapping in
-     the abstract state, the proof is implicitly based on the pigeonhole principle).\<close>
-lemma proc_key_exists: "\<lbrakk>\<turnstile>\<sigma>; i \<in> proc_ids \<sigma>\<rbrakk> \<Longrightarrow> \<exists> k \<in> proc_keys \<sigma>. proc_id \<sigma> k = i"
-proof (rule ccontr, subst (asm) bex_simps(8))
-  let ?rng = "{1 .. nprocs \<sigma>}"
-  let ?prj = "proc_id \<sigma> ` proc_keys \<sigma>"
-  assume "\<forall>k\<in>proc_keys \<sigma>. proc_id \<sigma> k \<noteq> i"
-  hence 0:"i \<notin> ?prj"
-    by auto
-  assume "\<turnstile> \<sigma>"
-  hence 1:"?prj \<subseteq> ?rng" and 2:"card ?prj = card ?rng"
-    unfolding abs_wf_def procs_rng_wf_def procs_map_wf_def
-    by (auto simp add: image_subset_iff card_image)
-  assume *:"i\<in>?rng"
-  have "card ?prj = card (?prj \<union> {i} - {i})"
-    using 0 by simp
-  also have "... < card (?prj \<union> {i})"
-    by (rule card_Diff1_less, simp_all)
-  also from * have "... \<le> card ?prj"
-    using 1
-    by (subst 2, intro card_mono, simp_all)
-  finally show False ..
-qed
-
-text \<open>The function @{term "proc_id\<inverse>"} gives valid procedure ids.\<close>
-lemma proc_key_of_id_in_keys[simp]: "\<lbrakk>\<turnstile>\<sigma>; i \<in> proc_ids \<sigma>\<rbrakk> \<Longrightarrow> proc_id\<inverse> \<sigma> i \<in> proc_keys \<sigma>"
-  using proc_key_exists the_inv_into_into[of "proc_id \<sigma>" "proc_keys \<sigma>" i]
-  unfolding proc_id_inv_def procs_map_wf
-  by fast
-
-text \<open>Invertibility of computing procedure key (by its id) in any abstract state:\<close>
-lemma proc_key_of_id_inv'[simp]: "\<lbrakk>\<turnstile>\<sigma>; i \<in> proc_ids \<sigma>\<rbrakk> \<Longrightarrow> proc_id \<sigma> (proc_id\<inverse> \<sigma> i) = i"
-  using proc_key_exists f_the_inv_into_f[of "proc_id \<sigma>" "proc_keys \<sigma>" i]
-  unfolding proc_id_inv_def procs_map_wf
-  by fast
-
-subsection \<open>Any well-formed abstract state can be stored\<close>
-
-text \<open>A mapping of addresses with specified (defined) values:\<close>
-definition
-  "con_wit_map \<sigma> :: _ \<rightharpoonup> word32 \<equiv>
-        [@nprocs \<mapsto> of_nat (nprocs \<sigma>)]
-     ++ (Some \<circ> ucast \<circ> proc_id\<inverse> \<sigma> \<circ> @proc_key.id) |` @proc_keys \<sigma>
-     ++ (Some \<circ> ucast \<circ> @proc_id.key) |` @proc_ids \<sigma>"
-
-text \<open>A sample storage extending the above mapping with default zero values:\<close>
-definition "con_wit \<sigma> \<equiv> override_on zero_storage (the \<circ> con_wit_map \<sigma>) (dom (con_wit_map \<sigma>))"
-
-lemmas con_wit = con_wit_def con_wit_map_def comp_def
-
-lemma restrict_subst[simp]: "k \<in> s \<Longrightarrow> (f |` { g k | k. k \<in> s}) (g k) = f (g k)"
-  unfolding restrict_map_def
-  by auto
-
-lemma restrict_rule: "x \<notin> A \<Longrightarrow> x \<notin> dom(f |` A)"
-  by simp
-
-text \<open>Existence of a storage corresponding to any well-formed abstract state:\<close>
-theorem models_nonvac: "\<turnstile> \<sigma> \<Longrightarrow> \<exists>s. s \<tturnstile> \<sigma>"
-  unfolding models_nprocs models_proc_keys models_proc_ids
-proof (intro exI[of _ "con_wit \<sigma>"] conjI)
-  assume wf:"\<turnstile>\<sigma>"
-  thus "unat (con_wit \<sigma> @nprocs) = nprocs \<sigma>"
-    unfolding con_wit
-    using nprocs_key_notin_proc_key_addrs nprocs_key_notin_proc_id_addrs le_unat_uoi[where z=max_nprocs_word]
-    apply (subst override_on_apply_in, simp, subst map_add_dom_app_simps(3))
-    apply (rule restrict_rule, auto, subst map_add_dom_app_simps(3))
-    by (auto simp add:procs_rng_wf)
-  from wf have "\<And> k. k \<in> proc_keys \<sigma> \<Longrightarrow> proc_id\<inverse> \<sigma> (@proc_key.id (@proc_key (proc_id \<sigma> k))) = k"
-    by (subst id_of_key_addr_inv) (auto simp add:procs_rng_wf, force)
-  thus "\<forall>k\<in>proc_keys \<sigma>. con_wit \<sigma> (@proc_key (proc_id \<sigma> k)) = ucast k"
-    unfolding con_wit proc_key_addrs_def proc_id_addrs_def
-    apply (intro ballI, subst override_on_apply_in, (auto)[1])
-    apply (subst map_add_dom_app_simps(3))
-    (*apply (subst map_add_find_right)
-    apply (subst restrict_subst)
-    by auto *)
-    sorry
-  show "\<forall>k\<in>proc_keys \<sigma>. unat (con_wit \<sigma> (@proc_id k)) = proc_id \<sigma> k"
-    unfolding con_wit proc_key_addrs_def proc_id_addrs_def
-    sorry
-qed
-
-subsection \<open>Unambiguity of encoding\<close>
-
-subsubsection \<open>Auxiliary lemmas\<close>
-
-proposition word32_key_downcast:"is_down (ucast :: word32 \<Rightarrow> key)"
-  unfolding is_down_def target_size_def source_size_def
-  by simp
-
-lemmas key_upcast =
-  ucast_down_ucast_id[OF word32_key_downcast]
-  down_ucast_inj[OF word32_key_downcast]
-
-lemma con_id_inj[consumes 4]:
-  "\<lbrakk>\<turnstile> \<sigma>; s \<tturnstile> \<sigma>;
-    i\<^sub>1\<in>{1..nprocs \<sigma>}; i\<^sub>2\<in>{1..nprocs \<sigma>};
-    s (@proc_key i\<^sub>1) = s (@proc_key i\<^sub>2)\<rbrakk> \<Longrightarrow> i\<^sub>1 = i\<^sub>2"
-  unfolding models_proc_keys
-  using proc_key_of_id_in_keys key_upcast
-        proc_key_of_id_inv'[symmetric, of _ i\<^sub>1] proc_key_of_id_inv'[symmetric, of _ i\<^sub>2]
-  by metis
-
-text \<open>
-  The concrete encoding of abstract storage is unambiguous, i. e. the same storage cannot
-  model two distinct well-formed abstract states.
-\<close>
-theorem models_inj[simp]: "\<lbrakk>\<turnstile> \<sigma>\<^sub>1; \<turnstile> \<sigma>\<^sub>2; s \<tturnstile> \<sigma>\<^sub>1; s \<tturnstile> \<sigma>\<^sub>2\<rbrakk> \<Longrightarrow> (\<sigma>\<^sub>1 :: ('p :: proc_class) abs) = \<sigma>\<^sub>2"
-  (is "\<lbrakk>?wf1; ?wf2; ?models1; ?models2\<rbrakk> \<Longrightarrow> _")
-proof (intro abs.equality ext option.expand, rule ccontr)
-  fix x
-  {
-    fix \<sigma> \<sigma>':: "'p abs"
-    assume wf1:"\<turnstile> \<sigma>" and wf2:"\<turnstile> \<sigma>'"
-    assume models1:"s \<tturnstile> \<sigma>" and models2:"s \<tturnstile> \<sigma>'"
-    fix i p
-    assume Some:"procs \<sigma> x = Some (i, p)"
-    with wf1 have "i \<in> proc_ids \<sigma>" unfolding procs_rng_wf Ball_def by auto
-    with wf2 models1 models2
-    have "proc_id\<inverse> \<sigma>' i \<in> proc_keys \<sigma>' \<and> proc_id \<sigma>' (proc_id\<inverse> \<sigma>' i) = i"
-      unfolding models_nprocs by simp
-    moreover with Some models1 models2 have "proc_id\<inverse> \<sigma>' i = x"
-      unfolding models_proc_keys
-      using key_upcast by (metis domI fst_conv option.sel)
-    ultimately have "procs \<sigma>' x \<noteq> None" by auto
-  }
-  note wlog = this
-  assume ?wf1 ?wf2 ?models1 and ?models2
-  {
-    assume neq:"(procs \<sigma>\<^sub>1 x = None) \<noteq> (procs \<sigma>\<^sub>2 x = None)"
-    show False
-    proof (cases "procs \<sigma>\<^sub>1 x")
-      case Some
-      with wlog \<open>?wf1\<close> \<open>?wf2\<close> \<open>?models1\<close> \<open>?models2\<close> neq show ?thesis by fastforce
-    next
-      case None
-      with neq have "procs \<sigma>\<^sub>2 x \<noteq> None" by simp
-      with wlog \<open>?wf1\<close> \<open>?wf2\<close> \<open>?models1\<close> \<open>?models2\<close> neq show ?thesis by force
-    qed
-  }
-  {
-    assume in\<sigma>\<^sub>1:"procs \<sigma>\<^sub>1 x \<noteq> None" and in\<sigma>\<^sub>2:"procs \<sigma>\<^sub>2 x \<noteq> None"
-    show "proc \<sigma>\<^sub>1 x = proc \<sigma>\<^sub>2 x"
-    proof
-      let ?i\<^sub>1 = "proc_id \<sigma>\<^sub>1 x" and ?i\<^sub>2 = "proc_id \<sigma>\<^sub>2 x"
-      from in\<sigma>\<^sub>1 and in\<sigma>\<^sub>2
-      have "procs \<sigma>\<^sub>1 x = Some (?i\<^sub>1, proc_bdy \<sigma>\<^sub>1 x)"
-        and "procs \<sigma>\<^sub>2 x = Some (?i\<^sub>2, proc_bdy \<sigma>\<^sub>2 x)"
-        by auto
-      with \<open>?wf1\<close> and \<open>?wf2\<close>
-      have "?i\<^sub>1\<in>{1..nprocs \<sigma>\<^sub>1}" and "?i\<^sub>2\<in>{1..nprocs \<sigma>\<^sub>2}" unfolding procs_rng_wf by auto
-      moreover with in\<sigma>\<^sub>1 in\<sigma>\<^sub>2 \<open>?models1\<close> and \<open>?models2\<close>
-      have "s (@proc_key ?i\<^sub>1) = s (@proc_key ?i\<^sub>2)" unfolding models_proc_keys by force
-      moreover with \<open>?models1\<close> \<open>?models2\<close> and \<open>?i\<^sub>2\<in>{1..nprocs \<sigma>\<^sub>2}\<close>
-      have "?i\<^sub>2\<in>{1..nprocs \<sigma>\<^sub>1}" unfolding models_nprocs by simp
-      ultimately show "?i\<^sub>1 = ?i\<^sub>2" using \<open>?wf1\<close> \<open>?models1\<close> and con_id_inj[of \<sigma>\<^sub>1] by blast
-
-      show "proc_bdy \<sigma>\<^sub>1 x = proc_bdy \<sigma>\<^sub>2 x"
-        using in\<sigma>\<^sub>1 in\<sigma>\<^sub>2 \<open>?wf1\<close> \<open>?wf2\<close> key_inj
-        unfolding procs_rng_wf by (metis UNIV_I domIff the_inv_into_f_f)
-    qed
-  }
-qed (simp)
-
-section \<open>Well-formedness of a storage state\<close>
-text \<open>
-  We need a decoding function on storage states. However, not every storage state can be
-  decoded into an abstract state. So we introduce a minimal well-formedness predicate on
-  storage states.
-\<close>
-
-text \<open>Number of procedures is bounded, otherwise procedure key addresses can become invalid and we
-      cannot read the procedure keys from the storage.\<close>
-definition "nprocs_wf s \<equiv> unat (s @nprocs) \<le> max_nprocs"
-
-text \<open>Well-formedness of procedure keys:
-      \begin{enumerate}
-      \item procedure keys should fit into 24-byte words;
-      \item they should represent some existing procedures
-            (currently this is essentially a temporary work-around
-             and is understood in a very abstract sense
-             (Hilbert epsilon operator is used to ``retrieve'' procedures),
-             really we need to formalize how the procedures themselves are stored);
-      \item the same procedure key should not be stored by two distinct procedure key addresses;
-      \item procedure heap should contain valid procedure index for each procedure key.
-      \end{enumerate}\<close>
-definition "proc_keys_wf (dummy :: 'a itself) (s :: storage) \<equiv>
-    (\<forall>k\<in>{s (@proc_key i) | i. i\<in>{1..unat (s @nprocs)}}. ucast (ucast k :: key) = k)
-  \<and> (\<forall>i\<in>{1..unat (s @nprocs)}. \<exists>p :: ('a :: proc_class). ucast (key p) = s (@proc_key i))
-  \<and> inj_on (s \<circ> @proc_key) {1..unat (s @nprocs)}
-  \<and> (\<forall>i \<in> {1 .. unat (s @nprocs)}. unat (s (@proc_id (ucast (s (@proc_key i))))) = i)"
-
-text \<open>Well-formedness of a storage state: the two above requirements should hold.\<close>
-definition con_wf ("\<TTurnstile>\<^bsub>_\<^esub> _" [1000, 60] 60)  where
-  "\<TTurnstile>\<^bsub>(d :: ('a :: proc_class) itself)\<^esub> s \<equiv>
-    nprocs_wf s
-  \<and> proc_keys_wf d s"
-
-notation (input) con_wf ("\<TTurnstile>\<^sub>__" [1000, 60] 60)
-
-lemmas nprocs_wf = con_wf_def nprocs_wf_def
-
-lemmas proc_keys_wf = con_wf_def proc_keys_wf_def
-
-text \<open>We proceed with the proof that any storage state corresponding (in the @{text \<tturnstile>} sense) to
-      a well-formed abstract state is well-formed.\<close>
-
-subsection \<open>Auxiliary lemmas\<close>
-
-text \<open>Any property on procedure ids can be reformulated on the corresponding procedure keys
-      according to a well-formed abstract state (elimination rule for procedure ids).\<close>
-lemma elim_proc_id[consumes 3]:
-  assumes "i \<in> {1..unat (s @nprocs)}"
-  assumes "\<turnstile> \<sigma>"
-  assumes "s \<tturnstile> \<sigma>"
-  obtains k where "k \<in> proc_keys \<sigma> \<and> i = proc_id \<sigma> k"
-  using assms proc_key_exists
-  unfolding models_nprocs
-  by metis
-
-subsection \<open>Storage corresponding to a well-formed state is well-formed\<close>
-theorem model_wf[simp, intro]:"\<lbrakk>\<turnstile>(\<sigma> :: ('p :: proc_class) abs); s \<tturnstile> \<sigma>\<rbrakk> \<Longrightarrow> \<TTurnstile>\<^bsub>(p :: 'p itself)\<^esub>s"
-  unfolding proc_keys_wf
-proof (intro conjI ballI)
-  assume wf:"\<turnstile> \<sigma>" and models:"s \<tturnstile> \<sigma>"
-  thus "nprocs_wf s"
-    unfolding procs_rng_wf models_nprocs nprocs_wf_def by simp
-  note elim_id = elim_proc_id[OF _ wf models]
-  show "inj_on (s \<circ> @proc_key) {1..unat (s @nprocs)}"
-    unfolding inj_on_def
-  proof (intro ballI impI)
-    fix x y
-    assume "x\<in>{1..unat (s @nprocs)}" and "y\<in>{1..unat (s @nprocs)}"
-    from wf models and this
-    show "(s \<circ> @proc_key) x = (s \<circ> @proc_key) y \<Longrightarrow> x = y"
-      using key_upcast
-      by (elim elim_id, auto simp add:models_proc_keys)
-  qed
-  {
-    fix i
-    assume "i\<in>{1..unat (s @nprocs)}"
-
-    thus "\<exists>p :: 'p. ucast (key p) = s (@proc_key i)"
-      using wf models
-      apply (intro exI[of _ "proc_bdy \<sigma> (proc_id\<inverse> \<sigma> i)"])
-      by (elim elim_id, simp add:models_proc_keys procs_rng_wf)
-  }
-  {
-    fix k
-    assume "k\<in>{s (@proc_key i) | i. i\<in>{1..unat (s @nprocs)}}"
-    then obtain x where "x \<in> {1..unat (s @nprocs)}" and "k = s (@proc_key x)"
-      by (simp only:Setcompr_eq_image image_iff, elim bexE)
-    thus "ucast (ucast k :: key) = k"
-      using wf models key_upcast
-      by (elim elim_id, auto simp add:models_proc_keys)
-  }
-  fix i
-  assume "i \<in> {1..unat (s @nprocs)}"
-  thus "unat (s (@proc_id (ucast (s (@proc_key i))))) = i"
-    using wf models
-    sorry
-qed
-
-section \<open>Decoding of storage\<close>
-
-text \<open>Auxiliary abbreviations\<close>
-
-abbreviation "proc_pair (p :: ('p :: proc_class) itself) s i \<equiv>
-  let k = ucast (s (@proc_key i)) in (k, (i, SOME p :: 'p. key p = k))"
-
-abbreviation "proc_list p s \<equiv> [proc_pair p s i. i \<leftarrow> [1..<Suc (unat (s @nprocs))]]"
-
-text \<open>The decoding function:\<close>
-definition abs ("\<lbrace>_\<rbrace>\<^bsub>_\<^esub>" [1000, 1000] 1000) where "\<lbrace>s\<rbrace>\<^bsub>p\<^esub> = \<lparr> procs = map_of (proc_list p s) \<rparr>"
-
-notation (input) abs ("\<lbrace>_\<rbrace>\<^sub>_" [1000, 1000] 1000)
-
-lemmas abs_simps =
-  Let_def set_map image_iff set_upt atLeastLessThanSuc_atLeastAtMost
-  abs.simps option.sel fst_conv
-
-theorem models_abs[simp, intro]: "\<TTurnstile>\<^sub>p s \<Longrightarrow> s \<tturnstile> \<lbrace>s\<rbrace>\<^sub>p"
-  unfolding models_nprocs models_proc_keys models_proc_ids
-proof (intro conjI ballI)
-  assume wf:"\<TTurnstile>\<^sub>p s"
-  hence "inj_on (\<lambda>i. ucast (s (@proc_key i)) :: key) {1..unat (s @nprocs)}"
-    unfolding inj_on_def proc_keys_wf
-    by (auto simp only:comp_apply Ball_def mem_Collect_eq) metis
-  hence fst_inj:"inj_on fst (set (proc_list p s))"
-    unfolding inj_on_def set_upt Ball_def abs_simps
-    by simp
-  have dist:"distinct (proc_list p s)"
-    by (simp add:distinct_map inj_on_def Let_def)
-  show models_nprocs:"unat (s @nprocs) = nprocs \<lbrace>s\<rbrace>\<^sub>p"
-    unfolding abs_def
-    by (simp only:abs.simps dom_map_of_conv_image_fst
-        distinct_card[OF dist] card_image[OF fst_inj] length_map length_upt)
-
-  have proc_pair_inj:"inj_on (proc_pair p s) {1..unat (s @nprocs)}"
-    unfolding inj_on_def prod.inject Let_def by simp
-  fix k
-  {
-    fix i q
-    assume proc:"procs \<lbrace>s\<rbrace>\<^sub>p k = Some (i, q)"
-    hence "(k, proc \<lbrace>s\<rbrace>\<^sub>p k) = proc_pair p s i"
-      by (simp only:abs.simps abs_def) (frule map_of_SomeD, auto simp add:Let_def)
-  } note proc_k_eq = this
-  {
-  assume k_in_keys:"k\<in>proc_keys \<lbrace>s\<rbrace>\<^sub>p"
-  hence proc_id_in_range:"proc_id \<lbrace>s\<rbrace>\<^sub>p k \<in> {1..nprocs \<lbrace>s\<rbrace>\<^sub>p}"
-    apply (subst models_nprocs[symmetric])
-    unfolding abs_def by (auto simp only:abs_simps; frule map_of_SomeD)+
-  have "map_of (proc_list p s) k = Some (proc \<lbrace>s\<rbrace>\<^sub>p k)"
-    using fst_inj proc_pair_inj proc_k_eq k_in_keys
-    apply (auto simp only:distinct_map distinct_upt abs_simps intro!:map_of_is_SomeI)
-    using models_nprocs proc_id_in_range
-    by (intro bexI[of _ "proc_id \<lbrace>s\<rbrace>\<^bsub>p\<^esub> k"], simp+)
-  thus "s (@proc_key (proc_id \<lbrace>s\<rbrace>\<^sub>p k)) = ucast k"
-    unfolding abs_def
-    apply (cases "map_of (proc_list p s) k")
-    apply (auto simp only: abs_simps, frule map_of_SomeD)
-    using wf unfolding proc_keys_wf by (force simp only: abs_simps)
-  }
-  next
-  fix k
-  assume "k \<in> proc_keys \<lbrace>s\<rbrace>\<^sub>p"
-  thus "unat (s (@proc_id k)) = proc_id \<lbrace>s\<rbrace>\<^sub>p k"
-    sorry
-qed
-
-section \<open>System calls\<close>
-
-text \<open>This section will contain specifications of the system calls.\<close>
-
-locale syscall =
-  fixes arg_wf :: "'p :: proc_class abs \<Rightarrow> 'b \<Rightarrow> bool" ("_ \<turnstile> _" [60, 60] 60)
-  fixes arg_abs :: "'a \<Rightarrow> 'b" ("\<lbrace>_\<rbrace>")
-  fixes pre :: "'a \<Rightarrow> storage \<Rightarrow> bool"
-  fixes post :: "'a \<Rightarrow> storage \<Rightarrow> storage \<Rightarrow> bool"
-  fixes app :: "'b \<Rightarrow> 'p abs \<Rightarrow> 'p abs"
-  assumes preserves_wf: "\<lbrakk>\<turnstile>\<sigma>; \<sigma> \<turnstile> arg\<rbrakk> \<Longrightarrow> \<turnstile> app arg \<sigma>"
-  assumes preserves_wf': "\<lbrakk>\<TTurnstile>\<^sub>p s; \<turnstile>\<lbrace>s\<rbrace>\<^sub>p; pre a s; post a s s'\<rbrakk> \<Longrightarrow> \<TTurnstile>\<^sub>p s'"
-  assumes arg_wf: "\<lbrakk>\<TTurnstile>\<^sub>p s; \<turnstile>\<lbrace>s\<rbrace>\<^sub>p; pre a s\<rbrakk> \<Longrightarrow> \<lbrace>s\<rbrace>\<^sub>p \<turnstile> \<lbrace>a\<rbrace>"
-  assumes consistent: "\<lbrakk>\<TTurnstile>\<^sub>p s; \<turnstile>\<lbrace>s\<rbrace>\<^sub>p; pre a s; post a s s'\<rbrakk> \<Longrightarrow> \<lbrace>s'\<rbrace>\<^sub>p = app \<lbrace>a\<rbrace> \<lbrace>s\<rbrace>\<^sub>p"
-begin
-theorem post_wf: "\<lbrakk>\<TTurnstile>\<^sub>p s; \<turnstile>(\<lbrace>s\<rbrace>\<^sub>p :: 'p abs); pre a s; post a s s'\<rbrakk> \<Longrightarrow> \<turnstile>\<lbrace>s'\<rbrace>\<^sub>p"
-  using arg_wf preserves_wf consistent by metis
-end
-
-definition add_proc_arg_wf :: "'p :: proc_class abs \<Rightarrow> (key \<times> 'p) \<Rightarrow> bool" ("_ \<turnstile>\<^bsub>add'_proc\<^esub> _")
-  where
-  "\<sigma> \<turnstile>\<^bsub>add_proc\<^esub> kp \<equiv>
-     let (k, p) = kp in
-     nprocs \<sigma> < max_nprocs \<and>
-     k \<notin> proc_keys \<sigma> \<and>
-     key p = k"
-
-definition "add_proc kp \<sigma> \<equiv> \<sigma> \<lparr> procs := procs \<sigma> (fst kp \<mapsto> (nprocs \<sigma> + 1, snd kp)) \<rparr>"
-
-definition add_proc_arg_abs :: "(key \<times> 'p :: proc_class) \<Rightarrow> (key \<times> 'p)" ("\<lbrace>_\<rbrace>\<^bsub>add'_proc\<^esub>") where
-  "\<lbrace>a\<rbrace>\<^bsub>add_proc\<^esub> = a"
-
-definition
-  "add_proc_pre (kp :: _ \<times> 'p :: proc_class) s \<equiv> \<lbrace>s\<rbrace>\<^bsub>TYPE('p)\<^esub> \<turnstile>\<^bsub>add_proc\<^esub> \<lbrace>kp\<rbrace>\<^bsub>add_proc\<^esub>"
-
-definition
-  "add_proc_post kp s s' \<equiv>
-     let (k, p) = kp in
-     s' @nprocs = s @nprocs + 1 \<and>
-     (\<forall>a\<in>{ @proc_key i | i. i\<in>{1..unat (s @nprocs)}}. s' a = s a) \<and>
-     s' (@proc_key (unat (s @nprocs) + 1)) = k"
-
-lemma add_proc_preserves_wf: "\<lbrakk>\<turnstile>\<sigma>; \<sigma> \<turnstile>\<^bsub>add_proc\<^esub> (k, p)\<rbrakk> \<Longrightarrow> \<turnstile> add_proc (k, p) \<sigma>"
-  (is "\<lbrakk>?wf\<sigma>; ?wf_arg\<rbrakk> \<Longrightarrow> _")
-proof (subst abs_wf_def, unfold procs_rng_wf_def procs_map_wf_def, intro conjI ballI)
-  let ?\<sigma>' = "add_proc (k, p) \<sigma>"
-  assume ?wf\<sigma> and ?wf_arg
-
-  thus "nprocs (?\<sigma>') \<le> max_nprocs" unfolding add_proc_arg_wf_def add_proc_def by simp
-
-  have proc_keys':"proc_keys ?\<sigma>' = proc_keys \<sigma> \<union> {k}"  unfolding add_proc_def by simp
-  have proc_id_k:"proc_id ?\<sigma>' k = nprocs \<sigma> + 1" unfolding add_proc_def by simp
-  have proc_id_unch:"\<forall>k\<in>proc_keys \<sigma>. proc_id ?\<sigma>' k = proc_id \<sigma> k"
-    using \<open>?wf_arg\<close> unfolding add_proc_def add_proc_arg_wf_def by simp
-
-  show "inj_on (proc_id ?\<sigma>') (proc_keys ?\<sigma>')"
-  proof (unfold inj_on_def, intro ballI impI)
-    fix x y
-    assume "x \<in> proc_keys ?\<sigma>'" and "y \<in> proc_keys ?\<sigma>'" and "proc_id ?\<sigma>' x = proc_id ?\<sigma>' y"
-    with \<open>?wf\<sigma>\<close> proc_keys' proc_id_k proc_id_unch show "x = y"
-      unfolding procs_map_wf procs_rng_wf inj_on_def add_proc_arg_wf_def
-                Ball_def atLeastAtMost_iff
-      by (cases "x \<in> proc_keys \<sigma>"; cases "y \<in> proc_keys \<sigma>", auto)
-  qed
-
-  fix k'
-  assume k'_in_keys:"k'\<in>proc_keys ?\<sigma>'"
-
-  with \<open>?wf\<sigma>\<close> \<open>?wf_arg\<close> proc_keys' proc_id_k proc_id_unch
-  show "proc_id ?\<sigma>' k' \<in> {1..nprocs ?\<sigma>'}"
-    unfolding add_proc_arg_wf_def procs_rng_wf Ball_def atLeastAtMost_iff
-    by (cases "k' = k", auto)
-
-  have "proc_bdy ?\<sigma>' k = p" unfolding add_proc_def by simp
-  moreover have "\<forall>k\<in>proc_keys \<sigma>. proc_bdy ?\<sigma>' k = proc_bdy \<sigma> k"
-    using \<open>?wf_arg\<close> unfolding add_proc_def add_proc_arg_wf_def by simp
-  ultimately show "key (proc_bdy ?\<sigma>' k') = k'"
-    using k'_in_keys \<open>?wf\<sigma>\<close> \<open>?wf_arg\<close> proc_keys'
-    unfolding add_proc_arg_wf_def procs_rng_wf
-    by (cases "k' = k", auto)
-qed
-
-subsection \<open>Register Procedure\<close>
-
-text \<open>Early version of "register procedure" operation.\<close>
-
-abbreviation higher32 where "higher32 k n \<equiv> n >> ((32 - k) * 8)"
-
-definition is_kernel_storage_key :: "word32 \<Rightarrow> bool"
-  where "is_kernel_storage_key w \<equiv> higher32 4 w = 0xffffffff"
-
-(*
-24 bytes aligned right in the 32 bytes
-*)
-definition n_of_procedures :: "storage \<Rightarrow> word32"
-  where "n_of_procedures s = s @nprocs"
-
-(*
-When a procedure is added to the kernel:
-  1. TODO: The procedure data is added to the procedure heap.
-  2. The procedure key is appended to the end of the array.
-  3. If the length value is equal to the maximum procedure index value, abort.
-  4. The length value (the first value) is incremented by one.
-  5. TODO: The procedure index value (in procedure metadata) is set to the new length value.
-*)
-definition add_proc' :: "key \<Rightarrow> storage \<Rightarrow> storage option"
-  where
-    "add_proc' p s \<equiv>
-      if n_of_procedures s < max_nprocs_word
-      then
-        Some (s
-              (@nprocs := n_of_procedures s + 1,
-               @nprocs OR (n_of_procedures s + 1) := ucast p))
-      else
-        None"
-
-lemma
-  assumes "n_of_procedures s < max_nprocs_word"
-  shows   "case (add_proc' p s) of
-           Some s' \<Rightarrow> n_of_procedures s' = n_of_procedures s + 1"
-proof-
-  have "0 < n_of_procedures s + 1"
-    using assms
-    by (metis
-         add_cancel_right_right
-         inc_i word_le_0_iff word_le_sub1 word_neq_0_conv word_zero_le zero_neq_one)
-  moreover have "n_of_procedures s + 1 \<le> max_nprocs_word"
-    using assms
-    by (metis add.commute add.right_neutral inc_i word_le_sub1 word_not_simps(1) word_zero_le)
-  ultimately have "@nprocs OR n_of_procedures s + 1 \<noteq> @nprocs"
-    using proc_key_addr_neq_nprocs_key by auto
-  thus ?thesis
-    unfolding add_proc'_def
-    using assms
-    by (simp add:n_of_procedures_def)
-qed*)
 end
