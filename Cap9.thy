@@ -5,6 +5,7 @@ imports
   "HOL-Word.Word"
   "HOL-Library.Adhoc_Overloading"
   "HOL-Library.DAList"
+  "HOL-Library.AList"
   "HOL-Library.Rewrite"
   "Word_Lib/Word_Lemmas"
 begin
@@ -650,7 +651,7 @@ lemma maybe_inv2_inj'[dest]:
   by (force split:if_splits intro:theI)
 
 locale invertible2 =
-  fixes rep :: "'a \<Rightarrow> 'b \<Rightarrow> 'c" ("\<lfloor>_\<rfloor>")
+  fixes rep :: "'a \<Rightarrow> 'c \<Rightarrow> 'c" ("\<lfloor>_\<rfloor>")
   assumes inj:"inj2 rep"
 begin
 definition inv2 :: "'c \<Rightarrow> 'a option" where "inv2 \<equiv> maybe_inv2 rep"
@@ -1362,6 +1363,9 @@ text \<open>
 lemma write_cap_safe[simp]: "a \<in> \<lceil>w\<rceil> \<Longrightarrow> a \<noteq> \<lfloor>a'\<rfloor>" for w :: write_capability and a' :: address
   by auto
 
+declare
+  write_cap_additional_bound'[simp del] write_cap_bound'[simp del] write_cap_no_overflow'[simp del]
+
 subsubsection \<open>Log capability\<close>
 
 text \<open>
@@ -1946,6 +1950,8 @@ adhoc_overloading rep proc_list_rep
 
 adhoc_overloading rep DAList.impl_of
 
+adhoc_overloading abs proc_list
+
 text \<open>
   We model the kernel storage as a record with three fields:
   \begin{itemize}
@@ -1956,8 +1962,8 @@ text \<open>
 \<close>
 
 record kernel =
-  curr_proc  :: ethereum_address
-  entry_proc :: ethereum_address
+  curr_proc  :: key
+  entry_proc :: key
   proc_list  :: procedure_list
 
 text \<open>
@@ -1994,6 +2000,8 @@ text \<open>
 \<close>
 
 definition "proc \<sigma> k \<equiv> the (procs \<sigma> k)"
+
+abbreviation "curr_proc' \<sigma> \<equiv> proc \<sigma> (curr_proc \<sigma>)"
 
 text \<open>@{text proc_key} returns the procedure key by its index in the procedure list.\<close>
 
@@ -2056,8 +2064,8 @@ definition "kernel_rep (\<sigma> :: kernel) r a \<equiv>
       Nprocs          \<Rightarrow> ucast (of_nat (nprocs \<sigma>) :: key) OR r a \<restriction> {LENGTH(key) ..<LENGTH(word32)}
     | Proc_key i      \<Rightarrow> ucast (proc_key \<sigma> \<lfloor>i\<rfloor>) OR r a \<restriction> {LENGTH(key) ..<LENGTH(word32)}
     | Kernel          \<Rightarrow> 0
-    | Curr_proc       \<Rightarrow> ucast (curr_proc \<sigma>) OR r a \<restriction> {LENGTH(ethereum_address) ..<LENGTH(word32)}
-    | Entry_proc      \<Rightarrow> ucast (entry_proc \<sigma>) OR r a \<restriction> {LENGTH(ethereum_address) ..<LENGTH(word32)}
+    | Curr_proc       \<Rightarrow> ucast (curr_proc \<sigma>) OR r a \<restriction> {LENGTH(key) ..<LENGTH(word32)}
+    | Entry_proc      \<Rightarrow> ucast (entry_proc \<sigma>) OR r a \<restriction> {LENGTH(key) ..<LENGTH(word32)}
     | Heap_proc k off \<Rightarrow> if has_key k \<sigma>
                          then proc_rep k (proc_id \<sigma> k) (proc \<sigma> k) r off
                          else r a)"
@@ -2157,6 +2165,164 @@ lemma cat_split: "map word_rcat (split x) = x"
 lemma split_inj[dest]: "split x = split y \<Longrightarrow> x = y"
   by (frule arg_cong[where f="map word_rcat"]) (subst (asm) cat_split)+
 
+lemma split_distrib[simp]:"split (a @ b) = split a @ split b" by (induct a, simp_all)
+
+lemma split_length_indep[dest]: "length a = length b \<Longrightarrow> length (split a) = length (split b)"
+proof (induct a arbitrary:b, simp)
+  case (Cons x xs)
+  from Cons(1)[of "tl b"] Cons(2) show ?case by (cases b, simp_all)
+qed
+
+lemma split_concat_length_indep[dest]:
+  "length a = length b \<Longrightarrow>
+   length (concat (split a :: 'b::len word list list)) =
+   length (concat (split b :: 'b::len word list list))"
+  for a b :: "'a::len word list"
+proof (induct a arbitrary:b, simp)
+  case (Cons x xs)
+  from Cons(1)[of "tl b"] Cons(2) show ?case by (cases b, simp_all add:word_rsplit_len_indep)
+qed
+
+lemma split_lengths:
+  "i \<in> set (split (a :: 'a::len word list) :: 'b::len word list list)
+   \<Longrightarrow> length i = (LENGTH('a) + LENGTH('b) - 1) div LENGTH('b)"
+  by (induct a, auto simp add:length_word_rsplit_exp_size')
+
+lemma sum_list_mul[simp]:"\<forall> x \<in> set l. f x = n \<Longrightarrow> sum_list (map f l) = n * length l"
+  by (induct l, simp_all)
+
+lemma length_split[simp]: "length (split a) = length a" by (induct a, simp_all)
+
+lemma length_concat_split[simp]:
+  "length (concat (split (a :: 'a::len word list) :: 'b::len word list list)) =
+   (LENGTH('a) + LENGTH('b) - 1) div LENGTH('b) * length a"
+  using split_lengths[of _ a]
+  by (auto simp add:length_concat, subst sum_list_mul, auto)
+
+function (sequential, domintros) cat :: "'a::len word list \<Rightarrow> 'b::len word list" where
+  "cat [] = []" |
+  "cat l  =
+    (let d = LENGTH('b) div LENGTH('a) in word_rcat (take d l) # cat (drop d l))"
+  using list.exhaust by auto
+
+fun group_by' :: "'a list \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> 'a list \<Rightarrow> 'a list list" where
+  "group_by' g _ _ []             = [rev g]" |
+  "group_by' g 0 n (x # xs)       = rev g # group_by' [x] (n - 1) n xs" |
+  "group_by' g (Suc m) n (x # xs) = group_by' (x # g) m n xs"
+
+lemma concat_group_by': "concat (group_by' g m n l) = rev g @ l"
+  by (induct rule:group_by'.induct[of _ g _ _ l], simp_all)
+
+lemma group_by'_lengths:
+  "\<lbrakk>0 < n; length g + m = n; m \<le> length l; n dvd length g + length l\<rbrakk>
+   \<Longrightarrow> \<forall> x \<in> set (group_by' g m n l). length x = n"
+proof (induct rule:group_by'.induct[of _ g m n l])
+  case (1 g m n)
+  thus ?case by simp
+next
+  case (2 g n x xs)
+  from 2(2) have p0:"length [x] + (n - 1) = n" by simp
+  from 2(2-5) have p1:"n - 1 \<le> length xs"
+    by (simp add: diff_add_inverse dvd_imp_le le_diff_conv less_eq_dvd_minus)
+  from 2(3,5) have p2:"n dvd length [x] + length xs" using dvd_add_triv_left_iff by fastforce
+  from 2(3) 2(1)[OF 2(2) p0 p1 p2] show ?case by simp
+next
+  case (3 g m n x xs)
+  from 3(3) have p0:"length (x # g) + m = n" by simp
+  from 3(4) have p1:"m \<le> length xs" by simp
+  from 3(5) have p2:"n dvd length (x # g) + length xs" by simp
+  from 3(1)[OF 3(2) p0 p1 p2] show ?case by simp
+qed
+
+definition "group_by n l \<equiv> if l = [] then [] else group_by' [] n n l"
+
+lemma concat_group_by[simp]: "concat (group_by n l) = l"
+  unfolding group_by_def using concat_group_by'[of "[]" n n l] by simp
+
+lemma group_by_lengths[intro]: "\<lbrakk>0 < n; n dvd length l; x \<in> set (group_by n l)\<rbrakk> \<Longrightarrow> length x = n"
+  unfolding group_by_def using group_by'_lengths[of n "[]" n l]
+  by (auto dest:dvd_imp_le split:if_splits)
+
+lemma cat_induct[consumes 2]:
+  assumes major0:"0 < n" and major1:"n dvd length l"
+      and base: "P []"
+      and induct:"\<And> l. P (drop n l) \<Longrightarrow> P l"
+    shows "P l"
+proof-
+  obtain u where
+    "l = concat u" and
+    "\<forall> x \<in> set u. length x = n" and
+    "concat (tl u) = drop n l"
+  proof-
+    have p0:"l = concat (group_by n l)" by simp
+    from major0 and major1 have p1:"\<forall>x \<in> set (group_by n l). length x = n" by auto
+    from p0 p1 have p2:"concat (tl (group_by n l)) = drop n l" by (cases "group_by n l", simp_all)
+    from that[of "group_by n l"] p0 p1 p2 show ?thesis .
+  qed
+  thus ?thesis proof (induct u arbitrary:l)
+    case Nil
+    with base show ?case by simp
+  next
+    case (Cons u us)
+    let ?l = "concat us"
+    from Cons(3) have 0:"\<forall>x\<in>set us. length x = n" by simp
+    from Cons(3) have 1:"concat (tl us) = drop n ?l" by (cases us, simp_all)
+    from Cons(2,3) have "concat us = drop n l" by simp
+    with Cons(1)[of ?l, simplified, OF 0 1] induct[of l] show ?case by simp
+  qed
+qed
+
+lemma cat_domintros_2:
+  "cat_dom TYPE('b::len) (drop (LENGTH('b) div LENGTH('a)) l) \<Longrightarrow> cat_dom TYPE('b) l"
+  for l :: "'a::len word list"
+  by (cases l, auto intro:cat.domintros)
+
+lemmas cat_domintros = cat.domintros(1) cat_domintros_2
+
+lemma cat_dom_divides[intro]:
+  "\<lbrakk>0 < LENGTH('b::len) div LENGTH('a); (LENGTH('b) div LENGTH('a)) dvd length l\<rbrakk>
+   \<Longrightarrow> cat_dom (TYPE ('b)) l"
+  for l :: "'a::len word list"
+  by (induct l rule:cat_induct, auto intro:cat_domintros)
+
+lemma concat_split:
+  "LENGTH('b) dvd LENGTH('a) \<Longrightarrow> cat (concat (split a) :: 'b::len word list) = a"
+  (is "?dvd \<Longrightarrow> cat (?concat a) = a")
+  for a :: "'a::len word list"
+proof -
+  assume ?dvd
+  moreover hence "(LENGTH('a) div LENGTH('b)) dvd length (?concat a)"
+    by (simp, metis dvd_div_mult_self dvd_mult2 dvd_refl given_quot_alt len_gt_0)
+  ultimately have dom:"cat_dom TYPE('a) (?concat a)" using div_positive dvd_imp_le by blast
+  thus ?thesis proof (induction a)
+    case Nil
+    note [simp] = cat.psimps(1)[OF cat.domintros(1)] cat.psimps(2)
+    thus ?case by simp
+  next
+    case (Cons x xs)
+    from \<open>?dvd\<close> have x:"length (word_rsplit x) > 0"
+      using length_word_rsplit_lt_size by fastforce
+    then obtain y ys where y:"?concat (x # xs) = y # ys"
+      apply (auto iff:neq_Nil_conv)
+      using x list_exhaust_size_gt0 by auto
+    with Cons(2) have 0:"cat_dom TYPE('a) (y # ys)" by simp
+    note [simp] = cat.psimps(2)[OF 0]
+    from \<open>?dvd\<close> have len:"length (word_rsplit x :: 'b word list) = LENGTH('a) div LENGTH('b)"
+      by (metis dvd_div_mult_self length_word_rsplit_even_size word_size)
+    from \<open>?dvd\<close> len x have dom0:"0 < LENGTH('a) div LENGTH('b)" by auto
+    from \<open>?dvd\<close> have
+      dom1:"LENGTH('a) div LENGTH('b) dvd
+       (LENGTH('a) + LENGTH('b) - 1) div LENGTH('b) * length xs"
+      by (metis dvd_def len length_word_rsplit_exp_size' word_size)
+    from cat_dom_divides[of "?concat xs", OF dom0] dom1
+    have dom:"cat_dom TYPE('a) (?concat xs)" by simp
+    from Cons(1)[OF dom] show ?case unfolding y by (simp, fold y, simp add:len word_rcat_rsplit)
+  qed
+qed
+
+lemma concat_split':"cat (concat (split a :: byte list list)) = a" for a :: "word32 list"
+  by (auto intro:concat_split)
+
 subsection \<open>Deterministic inverse function\<close>
 
 definition "maybe_inv2_tf z f l \<equiv>
@@ -2208,7 +2374,7 @@ lemma maybe_inv2_tf_inj':
   by (smt prefix_order.eq_iff the1_equality)
 
 locale invertible2_tf =
-  fixes rep :: "'a \<Rightarrow> 'b \<Rightarrow> 'c::zero list" ("\<lfloor>_\<rfloor>")
+  fixes rep :: "'a \<Rightarrow> 'c \<Rightarrow> 'c::zero list" ("\<lfloor>_\<rfloor>")
   assumes inj:"inj2_tf rep"
       and len_inv:"\<And> x y y'. length (rep x y) = length (rep x y')"
 begin
@@ -2229,10 +2395,11 @@ text \<open>
 
 definition "wf_cap c l \<equiv>
   case (c, l) of
-    (Call,  [c])      \<Rightarrow> (\<lceil>c\<rceil> :: prefixed_capability option) \<noteq> None
+    (Entry, [])       \<Rightarrow> True
+  | (_,     [])       \<Rightarrow> True \<comment> \<open>A hole representing a copy of the parent capability\<close>
+  | (Call,  [c])      \<Rightarrow> (\<lceil>c\<rceil> :: prefixed_capability option) \<noteq> None
   | (Reg,   [c])      \<Rightarrow> (\<lceil>c\<rceil> :: prefixed_capability option) \<noteq> None
   | (Del,   [c])      \<Rightarrow> (\<lceil>c\<rceil> :: prefixed_capability option) \<noteq> None
-  | (Entry, [])       \<Rightarrow> True
   | (Write, [c1, c2]) \<Rightarrow> (\<lceil>(c1, c2)\<rceil> :: write_capability option) \<noteq> None
   | (Log,   c)        \<Rightarrow> (\<lceil>c\<rceil> :: log_capability option) \<noteq> None
   | (Send,  [c])      \<Rightarrow> (\<lceil>c\<rceil> :: external_call_capability option) \<noteq> None
@@ -2243,9 +2410,12 @@ text \<open>
   (word list) is smaller or equal to 5.
 \<close>
 
-lemma length_wf_cap[dest]: "wf_cap c l \<Longrightarrow> length l \<le> 5"
-  unfolding wf_cap_def using log_cap_rep'
-  by (auto split:capability.splits list.splits)
+lemma length_wf_cap[dest]: "wf_cap c l \<Longrightarrow> length l \<le> 5" (is "?wf \<Longrightarrow> _")
+proof-
+  have [dest]: "\<lceil>h # t\<rceil> = Some y \<Longrightarrow> length t \<le> 4" for h t and y :: log_capability
+  using log_cap_inv.inv_inj'[of "h # t" y] log_cap_rep_length[of y] log_cap_rep'[of y] by simp
+  assume ?wf thus ?thesis unfolding wf_cap_def by (auto split:capability.splits list.splits)
+qed
 
 text \<open>
   Capabilities @{text l\<^sub>1} and @{text l\<^sub>2} of the type @{text c} are the same if their high-level
@@ -2254,14 +2424,23 @@ text \<open>
 
 definition "same_cap c l\<^sub>1 l\<^sub>2 \<equiv>
   case (c, l\<^sub>1, l\<^sub>2) of
-    (Call,  [c\<^sub>1], [c\<^sub>2])            \<Rightarrow> the \<lceil>c\<^sub>1\<rceil> = (the \<lceil>c\<^sub>2\<rceil> :: prefixed_capability)
+    (Entry, [],   [])              \<Rightarrow> True
+  | (_,     [],   [])              \<Rightarrow> True \<comment> \<open>The same parent capability\<close>
+  | (Call,  [c\<^sub>1], [c\<^sub>2])            \<Rightarrow> the \<lceil>c\<^sub>1\<rceil> = (the \<lceil>c\<^sub>2\<rceil> :: prefixed_capability)
   | (Reg,   [c\<^sub>1], [c\<^sub>2])            \<Rightarrow> the \<lceil>c\<^sub>1\<rceil> = (the \<lceil>c\<^sub>2\<rceil> :: prefixed_capability)
   | (Del,   [c\<^sub>1], [c\<^sub>2])            \<Rightarrow> the \<lceil>c\<^sub>1\<rceil> = (the \<lceil>c\<^sub>2\<rceil> :: prefixed_capability)
-  | (Entry, [],   [])              \<Rightarrow> True
   | (Write, [c1\<^sub>1, c2\<^sub>1], [c1\<^sub>2, c2\<^sub>2]) \<Rightarrow> the \<lceil>(c1\<^sub>1, c2\<^sub>1)\<rceil> = (the \<lceil>(c1\<^sub>2, c2\<^sub>2)\<rceil> :: write_capability)
-  | (Log,   c\<^sub>1,   c\<^sub>2)               \<Rightarrow> the \<lceil>c\<^sub>1\<rceil> = (the \<lceil>c\<^sub>2\<rceil> :: log_capability)
-  | (Send,  [c\<^sub>1], [c\<^sub>2])             \<Rightarrow> the \<lceil>c\<^sub>1\<rceil> = (the \<lceil>c\<^sub>2\<rceil> :: external_call_capability)
-  |  _                              \<Rightarrow> False"
+  | (Log,   c\<^sub>1,   c\<^sub>2)              \<Rightarrow> length c\<^sub>1 = length c\<^sub>2 \<and>
+                                     the \<lceil>c\<^sub>1\<rceil> = (the \<lceil>c\<^sub>2\<rceil> :: log_capability)
+  | (Send,  [c\<^sub>1], [c\<^sub>2])            \<Rightarrow> the \<lceil>c\<^sub>1\<rceil> = (the \<lceil>c\<^sub>2\<rceil> :: external_call_capability)
+  |  _                             \<Rightarrow> False"
+
+text \<open>
+  Some capability formats have undefined bits or bytes. Here we define function that takes
+  capability @{text l} of the type @{text c} and writes it over some 32-byte machine word list
+  @{text r} in such a way that these undefined parts will contain corresponding parts from
+  @{text r}.
+\<close>
 
 text \<open>
   Some capability formats have undefined bits or bytes. Here we define function that takes
@@ -2272,10 +2451,11 @@ text \<open>
 
 definition "overwrite_cap c l r \<equiv>
   case (c, l) of
-    (Call,  [c])        \<Rightarrow> [\<lfloor>the \<lceil>c\<rceil> :: prefixed_capability\<rfloor> (r ! 0)]
+    (Entry, [])         \<Rightarrow> []
+  | (_,     [])         \<Rightarrow> [] \<comment> \<open>Parent capabilty\<close>
+  | (Call,  [c])        \<Rightarrow> [\<lfloor>the \<lceil>c\<rceil> :: prefixed_capability\<rfloor> (r ! 0)]
   | (Reg,   [c])        \<Rightarrow> [\<lfloor>the \<lceil>c\<rceil> :: prefixed_capability\<rfloor> (r ! 0)]
   | (Del,   [c])        \<Rightarrow> [\<lfloor>the \<lceil>c\<rceil> :: prefixed_capability\<rfloor> (r ! 0)]
-  | (Entry, [])         \<Rightarrow> []
   | (Write, [c1, c2])   \<Rightarrow> let (c1, c2) = \<lfloor>the \<lceil>(c1, c2)\<rceil> :: write_capability\<rfloor> in [c1, c2]
                            \<comment> \<open>for mere consistency, no actual need in this,
                                can be just [c1, c2]\<close>
@@ -2287,10 +2467,6 @@ text \<open>
   over a 32-byte machine word list @{text r} will also be well-formed.
 \<close>
 
-lemma overwrite_cap_wf: "wf_cap c l \<Longrightarrow> wf_cap c (overwrite_cap c l r)"
-  unfolding wf_cap_def overwrite_cap_def
-  by (auto split:capability.splits list.splits simp add:write_cap_inv.inv_inj')
-
 abbreviation "zero_fill l \<equiv> replicate (length l) 0"
 
 text \<open>
@@ -2301,8 +2477,12 @@ text \<open>
 lemma same_cap_inj[dest]:
   "same_cap c l\<^sub>1 l\<^sub>2 \<Longrightarrow> overwrite_cap c l\<^sub>1 (zero_fill l\<^sub>1) = overwrite_cap c l\<^sub>2 (zero_fill l\<^sub>2)"
   unfolding same_cap_def overwrite_cap_def
-  by (simp split:capability.splits)
-     (auto split:capability.splits list.splits)+
+  by (simp split:capability.splits) (auto split:capability.splits list.splits)+
+
+text \<open>
+  If the result of writing capability @{text l\<^sub>1} over @{text r\<^sub>1} is equal to the result of writing
+  @{text l\<^sub>2} over @{text r\<^sub>2}, and both these capabilities are well-formed, then they are the same.
+\<close>
 
 text \<open>
   If the result of writing capability @{text l\<^sub>1} over @{text r\<^sub>1} is equal to the result of writing
@@ -2312,14 +2492,23 @@ text \<open>
 lemma overwrite_cap_inj[dest]:
   "\<lbrakk>overwrite_cap c l\<^sub>1 r\<^sub>1 = overwrite_cap c l\<^sub>2 r\<^sub>2; wf_cap c l\<^sub>1; wf_cap c l\<^sub>2\<rbrakk> \<Longrightarrow> same_cap c l\<^sub>1 l\<^sub>2"
   unfolding wf_cap_def overwrite_cap_def same_cap_def
-  by (simp split:capability.splits)
-    (auto split:capability.splits list.splits simp add:write_cap_inv.inv_inj')
+  by (simp split:capability.splits; cases l\<^sub>1; cases l\<^sub>2)
+    (auto split:capability.splits list.splits simp add:write_cap_inv.inv_inj' log_cap_inv.inv_inj')
+
+text \<open>Writing well-formed capability over some machine word list some does not change its length.\<close>
 
 text \<open>Writing well-formed capability over some machine word list some does not change its length.\<close>
 
 lemma length_overwrite_cap[simp]: "wf_cap c l \<Longrightarrow> length (overwrite_cap c l r) = length l"
   unfolding wf_cap_def overwrite_cap_def
-  by (auto split:capability.splits list.split prod.split)
+  apply (auto split:capability.splits list.split prod.split)
+  using log_cap_rep_length[of "the \<lceil>l\<rceil>"] by (simp add:log_cap_inv.inv_inj')
+
+text \<open>
+  Introduce type the described capability data as sent in the Register Procedure system call.
+  It is represented as a list of elements, each of which contains some capability type, capability
+  index, and well-formed capability itself.
+\<close>
 
 text \<open>
   Introduce type the described capability data as sent in the Register Procedure system call.
@@ -2851,6 +3040,8 @@ definition "ext_call_rep (d :: external_call_data) (r :: byte list) \<equiv>
 
 adhoc_overloading rep ext_call_rep
 
+declare length_split[simp del] length_concat_split[simp del]
+
 lemma ext_call_rep_inj[dest]: "\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>d\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: external_call_data
 proof (rule external_call_data.equality)
   {
@@ -2888,29 +3079,6 @@ definition "log_call_rep td r \<equiv>
   for td :: log_call_data
 
 adhoc_overloading rep log_call_rep
-
-lemma split_distrib[simp]:"split (a @ b) = split a @ split b" by (induct a, simp_all)
-
-lemma split_length_indep[dest]: "length a = length b \<Longrightarrow> length (split a) = length (split b)"
-proof (induct a arbitrary:b, simp)
-  case (Cons x xs)
-  from Cons(1)[of "tl b"] Cons(2) show ?case by (cases b, simp_all)
-qed
-
-lemma split_concat_length_indep[dest]:
-  "length a = length b \<Longrightarrow>
-   length (concat (split a :: 'b::len word list list)) =
-   length (concat (split b :: 'b::len word list list))"
-  for a b :: "'a::len word list"
-proof (induct a arbitrary:b, simp)
-  case (Cons x xs)
-  from Cons(1)[of "tl b"] Cons(2) show ?case by (cases b, simp_all add:word_rsplit_len_indep)
-qed
-
-lemma split_lengths:
-  "i \<in> set (split (a :: 'a::len word list) :: 'b::len word list list)
-   \<Longrightarrow> length i = (LENGTH('a) + LENGTH('b) - 1) div LENGTH('b)"
-  by (induct a, auto simp add:length_word_rsplit_exp_size')
 
 lemma log_call_rep_inj[dest]: "\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>d\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: log_call_data
 proof
@@ -2990,6 +3158,8 @@ interpretation write_call_inv: invertible2_tf write_call_rep ..
 
 adhoc_overloading abs write_call_inv.inv2_tf
 
+section \<open>System calls\<close>
+
 datatype result =
     Success storage
   | Revert
@@ -2997,6 +3167,259 @@ datatype result =
 abbreviation "SYSCALL_NOEXIST \<equiv> 0xaa"
 
 abbreviation "SYSCALL_BADCAP \<equiv> 0x33"
+
+abbreviation "SYSCALL_FAIL \<equiv> 0x66"
+
+subsection \<open>Register system call\<close>
+
+abbreviation "REG_TOOMANYCAPS \<equiv> 0x77"
+
+definition "valid_code (_ :: ethereum_address) = undefined"
+
+definition "caps t d \<equiv>
+  let caps = filter ((=) t \<circ> fst \<circ> fst) \<lfloor>cap_data d\<rfloor> in
+  if length caps < 2 ^ LENGTH(byte) - 1
+  then Some (map (apfst snd) caps)
+  else None"
+
+lemma wf_caps: "caps t d = Some c \<Longrightarrow> \<forall> (_, l) \<in> set c. wf_cap t l"
+  unfolding caps_def using cap_data_rep'[of "cap_data d"]
+  by (auto split:prod.splits if_splits simp add:Let_def)
+
+definition "sub_caps t cs p =
+   list_all
+     (\<lambda> (i :: capability_index, l) \<Rightarrow>
+      (case (t, l) of
+        (Call,  [])       \<Rightarrow> \<lfloor>i\<rfloor> < length \<lfloor>call_caps p\<rfloor>
+      | (Call,  [c])      \<Rightarrow> \<lfloor>i\<rfloor> < length \<lfloor>call_caps p\<rfloor> \<and>
+                             the (\<lceil>c\<rceil> :: prefixed_capability option) \<subseteq>\<^sub>c \<lfloor>call_caps p\<rfloor> ! \<lfloor>i\<rfloor>
+      | (Reg,   [])       \<Rightarrow> \<lfloor>i\<rfloor> < length \<lfloor>reg_caps p\<rfloor>
+      | (Reg,   [c])      \<Rightarrow> \<lfloor>i\<rfloor> < length \<lfloor>reg_caps p\<rfloor> \<and>
+                             the (\<lceil>c\<rceil> :: prefixed_capability option) \<subseteq>\<^sub>c \<lfloor>reg_caps p\<rfloor> ! \<lfloor>i\<rfloor>
+      | (Del,   [])       \<Rightarrow> \<lfloor>i\<rfloor> < length \<lfloor>del_caps p\<rfloor>
+      | (Del,   [c])      \<Rightarrow> \<lfloor>i\<rfloor> < length \<lfloor>del_caps p\<rfloor> \<and>
+                             the (\<lceil>c\<rceil> :: prefixed_capability option) \<subseteq>\<^sub>c \<lfloor>del_caps p\<rfloor> ! \<lfloor>i\<rfloor>
+      | (Entry, [])       \<Rightarrow> entry_cap p
+      | (Write, [])       \<Rightarrow> \<lfloor>i\<rfloor> < length \<lfloor>write_caps p\<rfloor>
+      | (Write, [c1, c2]) \<Rightarrow> \<lfloor>i\<rfloor> < length \<lfloor>write_caps p\<rfloor> \<and>
+                             the (\<lceil>(c1, c2)\<rceil> :: write_capability option) \<subseteq>\<^sub>c \<lfloor>write_caps p\<rfloor> ! \<lfloor>i\<rfloor>
+      | (Log,   [])       \<Rightarrow> \<lfloor>i\<rfloor> < length \<lfloor>log_caps p\<rfloor>
+      | (Log,   c)        \<Rightarrow> \<lfloor>i\<rfloor> < length \<lfloor>log_caps p\<rfloor> \<and>
+                             the (\<lceil>c\<rceil> :: log_capability option) \<subseteq>\<^sub>c \<lfloor>log_caps p\<rfloor> ! \<lfloor>i\<rfloor>
+      | (Send,  [])       \<Rightarrow> \<lfloor>i\<rfloor> < length \<lfloor>ext_caps p\<rfloor>
+      | (Send,  [c])      \<Rightarrow> \<lfloor>i\<rfloor> < length \<lfloor>ext_caps p\<rfloor> \<and>
+                             the (\<lceil>c\<rceil> :: external_call_capability option) \<subseteq>\<^sub>c \<lfloor>ext_caps p\<rfloor> ! \<lfloor>i\<rfloor>))
+     cs"
+
+definition "fill_caps t cs p \<equiv>
+  map
+   (\<lambda> (i :: capability_index, l) \<Rightarrow>
+     if l = [] then
+       case t of
+         Call  \<Rightarrow> (i, [\<lfloor>\<lfloor>call_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rfloor> (0 :: word32)])
+       | Reg   \<Rightarrow> (i, [\<lfloor>\<lfloor>reg_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rfloor> (0 :: word32)])
+       | Del   \<Rightarrow> (i, [\<lfloor>\<lfloor>del_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rfloor> (0 :: word32)])
+       | Entry \<Rightarrow> (i, [])
+       | Write \<Rightarrow> (i, let (a, s) = \<lfloor>\<lfloor>write_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rfloor> in [a, s])
+       | Log   \<Rightarrow> (i, \<lfloor>\<lfloor>log_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rfloor>)
+       | Send  \<Rightarrow> (i, [\<lfloor>\<lfloor>ext_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rfloor> (0 :: word32)])
+     else         (i, l))
+   cs"
+
+definition register :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
+  "register i d s \<equiv>
+     let \<sigma> = the \<lceil>s\<rceil>;
+         p = curr_proc' \<sigma> in
+     if \<not> LENGTH(word32) div LENGTH(byte) dvd length d then
+                                                      (Revert, [])
+     else case \<lceil>cat d\<rceil> of
+       None                                      \<Rightarrow>   (Revert, [])
+                                  \<comment> \<open>Malformed call data, currently the error code is not defined\<close>
+     | Some d                                    \<Rightarrow>
+       if max_nprocs = nprocs \<sigma>                  then (Revert, [SYSCALL_FAIL])
+                                                             \<comment> \<open>Too many procs: Unrealistic,
+                                                                  but needed for formal
+                                                                  correctness\<close>
+       else if has_key (proc_key d) \<sigma>            then (Revert, [SYSCALL_FAIL])
+                                                                   \<comment> \<open>Proc key exists,
+                                                                        specific error code not
+                                                                        defined\<close>
+       else if length \<lfloor>reg_caps p\<rfloor> \<le> \<lfloor>i\<rfloor>         then (Revert, [SYSCALL_BADCAP])
+                                                                                 \<comment> \<open>No such cap\<close>
+       else if proc_key d \<notin> \<lceil>\<lfloor>reg_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rceil>  then (Revert, [SYSCALL_BADCAP])
+       else if \<not> valid_code (eth_addr d)         then (Revert, [SYSCALL_FAIL]) \<comment> \<open>Code invalid\<close>
+       else (case (caps Call d,
+                  caps Reg d,
+                  caps Del d,
+                  caps Entry d,
+                  caps Write d,
+                  caps Log d,
+                  caps Send d) of
+       (Some calls, Some regs, Some dels, Some ents, Some wrts, Some logs, Some exts) \<Rightarrow>
+         if sub_caps Call  calls p \<and>
+            sub_caps Reg   regs  p \<and>
+            sub_caps Del   dels  p \<and>
+            sub_caps Entry ents  p \<and>
+            sub_caps Write wrts  p \<and>
+            sub_caps Log   logs  p \<and>
+            sub_caps Send  exts  p               then
+           let calls = fill_caps Call  calls p;
+               regs  = fill_caps Reg   regs  p;
+               dels  = fill_caps Del   dels  p;
+               ents  = fill_caps Entry ents  p;
+               wrts  = fill_caps Write wrts  p;
+               logs  = fill_caps Log   logs  p;
+               exts  = fill_caps Send  exts  p  in
+           let p' =
+              \<lparr> procedure.eth_addr   = eth_addr d,
+                call_caps  = cap_list (map (the \<circ> abs \<circ> hd \<circ> snd) calls),
+                reg_caps   = cap_list (map (the \<circ> abs \<circ> hd \<circ> snd) regs),
+                del_caps   = cap_list (map (the \<circ> abs \<circ> hd \<circ> snd) dels),
+                entry_cap  = ents \<noteq> [],
+                write_caps = cap_list (map (\<lambda> (_, [a, s]) \<Rightarrow> the \<lceil>(a, s)\<rceil>) wrts),
+                log_caps   = cap_list (map (the \<circ> abs \<circ> snd) logs),
+                ext_caps   = cap_list (map (the \<circ> abs \<circ> hd \<circ> snd) exts) \<rparr>;
+               procs = \<lceil>DAList.update (proc_key d) p' \<lfloor>proc_list \<sigma>\<rfloor>\<rceil>;
+               \<sigma>' = \<sigma> \<lparr> proc_list := procs \<rparr> in
+                                                      (Success (\<lfloor>\<sigma>'\<rfloor> s), [])
+         else                                         (Revert, [SYSCALL_BADCAP])
+                                                      \<comment> \<open>No cap inclusion\<close>
+      | _                                        \<Rightarrow>   (Revert, [SYSCALL_FAIL, REG_TOOMANYCAPS]))"
+
+subsection \<open>Delete system call\<close>
+
+abbreviation "DEL_NOPROC \<equiv> 0x33"
+
+definition delete :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
+  "delete i d s \<equiv>
+     let \<sigma> = the \<lceil>s\<rceil>;
+         p = curr_proc' \<sigma> in
+     if \<not> LENGTH(word32) div LENGTH(byte) dvd length d then
+                                                      (Revert, [])
+     else case \<lceil>cat d\<rceil> of
+       None                                      \<Rightarrow>   (Revert, [])
+                                  \<comment> \<open>Malformed call data, currently the error code is not defined\<close>
+     | Some k                                    \<Rightarrow>
+       if \<not> has_key k \<sigma>                          then (Revert, [SYSCALL_FAIL, DEL_NOPROC])
+       else if length \<lfloor>del_caps p\<rfloor> \<le> \<lfloor>i\<rfloor>         then (Revert, [SYSCALL_BADCAP])
+                                                                               \<comment> \<open>No such cap\<close>
+       else if k \<notin> \<lceil>\<lfloor>del_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rceil>           then (Revert, [SYSCALL_BADCAP])
+       else
+         let procs = \<lceil>DAList.delete k \<lfloor>proc_list \<sigma>\<rfloor>\<rceil>;
+             \<sigma>' = \<sigma> \<lparr> proc_list := procs \<rparr> in
+                                                      (Success (\<lfloor>\<sigma>'\<rfloor> s), [])"
+
+subsection \<open>Write system call\<close>
+
+definition write_addr :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
+  "write_addr i d s \<equiv>
+     let \<sigma> = the \<lceil>s\<rceil>;
+         p = curr_proc' \<sigma> in
+     if \<not> LENGTH(word32) div LENGTH(byte) dvd length d then
+                                                      (Revert, [])
+     else case \<lceil>cat d\<rceil> of
+       None                                      \<Rightarrow>   (Revert, [])
+                                  \<comment> \<open>Malformed call data, currently the error code is not defined\<close>
+     | Some (a, v)                               \<Rightarrow>
+       if length \<lfloor>write_caps p\<rfloor> \<le> \<lfloor>i\<rfloor>            then (Revert, [SYSCALL_BADCAP])
+                                                                               \<comment> \<open>No such cap\<close>
+       else if a \<notin> \<lceil>\<lfloor>write_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rceil>         then (Revert, [SYSCALL_BADCAP])
+       else
+                                                      (Success (s (a := v)), [])"
+
+subsection \<open>Set entry system call\<close>
+
+definition set_entry :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
+  "set_entry i d s \<equiv>
+     let \<sigma> = the \<lceil>s\<rceil>;
+         p = curr_proc' \<sigma> in
+     if \<not> LENGTH(word32) div LENGTH(byte) dvd length d then
+                                                      (Revert, [])
+     else case \<lceil>cat d\<rceil> of
+       None                                      \<Rightarrow>   (Revert, [])
+                                  \<comment> \<open>Malformed call data, currently the error code is not defined\<close>
+     | Some k                                    \<Rightarrow>
+       if \<not> has_key k \<sigma>                          then (Revert, [SYSCALL_FAIL])
+                                                                   \<comment> \<open>No such proc key,
+                                                                        specific error code not
+                                                                        defined\<close>
+       else if \<not> entry_cap p                     then (Revert, [SYSCALL_BADCAP])
+       else
+         let \<sigma>' = \<sigma> \<lparr> entry_proc := k \<rparr> in
+                                                      (Success (\<lfloor>\<sigma>'\<rfloor> s), [])"
+
+subsection \<open>Log system call\<close>
+
+type_synonym log = "(ethereum_address \<times> log_topics \<times> byte list) list"
+
+definition log ::
+  "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> (result \<times> byte list) \<times> log" where
+  "log i d s \<equiv>
+     let \<sigma> = the \<lceil>s\<rceil>;
+         p = curr_proc' \<sigma> in
+     let nolog = \<lambda> r. (r, []) in
+     case \<lceil>d\<rceil> of
+       None                                      \<Rightarrow>     nolog (Revert, [])
+                                  \<comment> \<open>Malformed call data, currently the error code is not defined\<close>
+     | Some (ts, l)                              \<Rightarrow>
+       if length \<lfloor>log_caps p\<rfloor> \<le> \<lfloor>i\<rfloor>                then nolog (Revert, [SYSCALL_BADCAP])
+                                                                               \<comment> \<open>No such cap\<close>
+       else if \<lfloor>ts\<rfloor> \<notin> \<lceil>\<lfloor>log_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rceil>          then nolog (Revert, [SYSCALL_BADCAP])
+       else
+         let log = [(procedure.eth_addr (curr_proc' \<sigma>), ts, l)] in
+                                                              ((Success s, []), log)"
+subsection \<open>Call system call\<close>
+
+abbreviation "SYSCALL_NOGAS \<equiv> 0x44"
+
+abbreviation "SYSCALL_REVERT \<equiv> 0x55"
+
+abbreviation "CALL_NOPROC \<equiv> 0x33"
+
+definition exec_call :: "[key, byte list, storage] \<Rightarrow> result option \<times> byte list"
+  where "exec_call k d s \<equiv> undefined"
+
+definition call :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
+  "call i d s \<equiv>
+     let \<sigma> = the \<lceil>s\<rceil>;
+         p = curr_proc' \<sigma> in
+     case \<lceil>d\<rceil> of
+       None                                      \<Rightarrow>   (Revert, [])
+                                  \<comment> \<open>Malformed call data, currently the error code is not defined\<close>
+     | Some (k, a)                               \<Rightarrow>
+       if \<not> has_key k \<sigma>                          then (Revert, [SYSCALL_FAIL, CALL_NOPROC])
+       else if length \<lfloor>call_caps p\<rfloor> \<le> \<lfloor>i\<rfloor>        then (Revert, [SYSCALL_BADCAP])
+                                                                               \<comment> \<open>No such cap\<close>
+       else if k \<notin> \<lceil>\<lfloor>call_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rceil>          then (Revert, [SYSCALL_BADCAP])
+       else
+         (case exec_call k a s of
+           (None,             _)                 \<Rightarrow>   (Revert, [SYSCALL_NOGAS])
+         | (Some (Success s), r)                 \<Rightarrow>   (Success s, r)
+         | (Some Revert,      r)                 \<Rightarrow>   (Revert, SYSCALL_REVERT # r))"
+
+subsection \<open>External system call\<close>
+
+definition exec_ext ::
+  "[ethereum_address, word32, byte list, storage] \<Rightarrow> result option \<times> byte list"
+  where "exec_ext a v d s \<equiv> undefined"
+
+definition external :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
+  "external i d s \<equiv>
+     let \<sigma> = the \<lceil>s\<rceil>;
+         p = curr_proc' \<sigma> in
+     case \<lceil>d\<rceil> of
+       None                                      \<Rightarrow>   (Revert, [])
+                                  \<comment> \<open>Malformed call data, currently the error code is not defined\<close>
+     | Some d                                    \<Rightarrow>
+       let a = addr d; g = amount d in
+       if length \<lfloor>ext_caps p\<rfloor> \<le> \<lfloor>i\<rfloor>              then (Revert, [SYSCALL_BADCAP])
+                                                                               \<comment> \<open>No such cap\<close>
+       else if (a, g) \<notin> \<lceil>\<lfloor>ext_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rceil>      then (Revert, [SYSCALL_BADCAP])
+       else
+         (case exec_ext a g (data d) s of
+           (None,             _)                 \<Rightarrow>   (Revert, [SYSCALL_NOGAS])
+         | (Some (Success s), r)                 \<Rightarrow>   (Success s, r)
+         | (Some Revert,      r)                 \<Rightarrow>   (Revert, SYSCALL_REVERT # r))"
 
 definition "cap_type_opt_rep c \<equiv> case c of Some c \<Rightarrow> \<lfloor>c\<rfloor> | None \<Rightarrow> 0x00"
   for c :: "capability option"
@@ -3012,41 +3435,78 @@ interpretation cap_type_opt_inv: invertible cap_type_opt_rep ..
 
 adhoc_overloading abs cap_type_opt_inv.inv
 
-definition call :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
-  "call _ _ s \<equiv> (Success s, [])"
-
-definition register :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
-  "register _ _ s \<equiv> (Success s, [])"
-
-definition delete :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
-  "delete _ _ s \<equiv> (Success s, [])"
-
-definition set_entry :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
-  "set_entry _ _ s \<equiv> (Success s, [])"
-
-definition write_addr :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
-  "write_addr _ _ s \<equiv> (Success s, [])"
-
-definition log :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
-  "log _ _ s \<equiv> (Success s, [])"
-
-definition external :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
-  "external _ _ s \<equiv> (Success s, [])"
-
-definition execute :: "byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
+definition execute :: "byte list \<Rightarrow> storage \<Rightarrow> (result \<times> byte list) \<times> log" where
   "execute c s \<equiv> case takefill 0x00 2 c of ct # ci # c \<Rightarrow>
+    let nolog = \<lambda> r. (r, []) in
     (case \<lceil>ct\<rceil> of
-      None           \<Rightarrow> (Revert, [SYSCALL_NOEXIST])
-    | Some None      \<Rightarrow> (Success s, [])
+      None           \<Rightarrow> nolog (Revert, [SYSCALL_NOEXIST])
+    | Some None      \<Rightarrow> nolog (Success s, [])
     | Some (Some ct) \<Rightarrow> (case \<lceil>ci\<rceil> of
-       None          \<Rightarrow> (Revert, [SYSCALL_BADCAP]) \<comment> \<open>Capability index out of bounds\<close>
+       None          \<Rightarrow> nolog (Revert, [SYSCALL_BADCAP]) \<comment> \<open>Capability index out of bounds\<close>
      | Some ci       \<Rightarrow> (case ct of
-         Call        \<Rightarrow> call ci c s
-       | Reg         \<Rightarrow> register ci c s
-       | Del         \<Rightarrow> delete ci c s
-       | Entry       \<Rightarrow> set_entry ci c s
-       | Write       \<Rightarrow> write_addr ci c s
+         Call        \<Rightarrow> nolog (call ci c s)
+       | Reg         \<Rightarrow> nolog (register ci c s)
+       | Del         \<Rightarrow> nolog (delete ci c s)
+       | Entry       \<Rightarrow> nolog (set_entry ci c s)
+       | Write       \<Rightarrow> nolog (write_addr ci c s)
        | Log         \<Rightarrow> log ci c s
-       | Send        \<Rightarrow> external ci c s)))"
+       | Send        \<Rightarrow> nolog (external ci c s))))"
+
+section \<open>Initialization\<close>
+
+definition "empty_kernel \<equiv>
+          \<lparr>  curr_proc  = 0,
+             entry_proc = 0,
+             proc_list = \<lceil>Alist []\<rceil> \<rparr>"
+
+definition "filled_caps t cs =
+   list_all
+     (\<lambda> (_, l) \<Rightarrow>
+      (case (t, l) of
+        (Entry, []) \<Rightarrow> True
+      | (_,     []) \<Rightarrow> False
+      | (_,      _) \<Rightarrow> True))
+     cs"
+
+definition init :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
+  "init i d s \<equiv>
+     let \<sigma> = empty_kernel in
+     if \<not> LENGTH(word32) div LENGTH(byte) dvd length d then
+                                                      (Revert, [])
+     else case \<lceil>cat d\<rceil> of
+       None                                      \<Rightarrow>   (Revert, [])
+                                  \<comment> \<open>Malformed call data, currently the error code is not defined\<close>
+     | Some d                                    \<Rightarrow>
+       if \<not> valid_code (eth_addr d)              then (Revert, [SYSCALL_FAIL]) \<comment> \<open>Code invalid\<close>
+       else (case (caps Call d,
+                  caps Reg d,
+                  caps Del d,
+                  caps Entry d,
+                  caps Write d,
+                  caps Log d,
+                  caps Send d) of
+       (Some calls, Some regs, Some dels, Some ents, Some wrts, Some logs, Some exts) \<Rightarrow>
+         if filled_caps Call  calls \<and>
+            filled_caps Reg   regs  \<and>
+            filled_caps Del   dels  \<and>
+            filled_caps Entry ents  \<and>
+            filled_caps Write wrts  \<and>
+            filled_caps Log   logs  \<and>
+            filled_caps Send  exts               then
+           let p' =
+              \<lparr> procedure.eth_addr   = eth_addr d,
+                call_caps  = cap_list (map (the \<circ> abs \<circ> hd \<circ> snd) calls),
+                reg_caps   = cap_list (map (the \<circ> abs \<circ> hd \<circ> snd) regs),
+                del_caps   = cap_list (map (the \<circ> abs \<circ> hd \<circ> snd) dels),
+                entry_cap  = ents \<noteq> [],
+                write_caps = cap_list (map (\<lambda> (_, [a, s]) \<Rightarrow> the \<lceil>(a, s)\<rceil>) wrts),
+                log_caps   = cap_list (map (the \<circ> abs \<circ> snd) logs),
+                ext_caps   = cap_list (map (the \<circ> abs \<circ> hd \<circ> snd) exts) \<rparr>;
+               procs = \<lceil>DAList.update (proc_key d) p' \<lfloor>proc_list \<sigma>\<rfloor>\<rceil>;
+               \<sigma>' = \<sigma> \<lparr> proc_list := procs, entry_proc := proc_key d \<rparr> in
+                                                      (Success (\<lfloor>\<sigma>'\<rfloor> s), [])
+         else                                         (Revert, [SYSCALL_BADCAP])
+                                                      \<comment> \<open>Some parent caps were specified\<close>
+      | _                                        \<Rightarrow>   (Revert, [SYSCALL_FAIL, REG_TOOMANYCAPS]))"
 
 end
