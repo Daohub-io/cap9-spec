@@ -2442,13 +2442,6 @@ text \<open>
   @{text r}.
 \<close>
 
-text \<open>
-  Some capability formats have undefined bits or bytes. Here we define function that takes
-  capability @{text l} of the type @{text c} and writes it over some 32-byte machine word list
-  @{text r} in such a way that these undefined parts will contain corresponding parts from
-  @{text r}.
-\<close>
-
 definition "overwrite_cap c l r \<equiv>
   case (c, l) of
     (Entry, [])         \<Rightarrow> []
@@ -2484,11 +2477,6 @@ text \<open>
   @{text l\<^sub>2} over @{text r\<^sub>2}, and both these capabilities are well-formed, then they are the same.
 \<close>
 
-text \<open>
-  If the result of writing capability @{text l\<^sub>1} over @{text r\<^sub>1} is equal to the result of writing
-  @{text l\<^sub>2} over @{text r\<^sub>2}, and both these capabilities are well-formed, then they are the same.
-\<close>
-
 lemma overwrite_cap_inj[dest]:
   "\<lbrakk>overwrite_cap c l\<^sub>1 r\<^sub>1 = overwrite_cap c l\<^sub>2 r\<^sub>2; wf_cap c l\<^sub>1; wf_cap c l\<^sub>2\<rbrakk> \<Longrightarrow> same_cap c l\<^sub>1 l\<^sub>2"
   unfolding wf_cap_def overwrite_cap_def same_cap_def
@@ -2497,18 +2485,10 @@ lemma overwrite_cap_inj[dest]:
 
 text \<open>Writing well-formed capability over some machine word list some does not change its length.\<close>
 
-text \<open>Writing well-formed capability over some machine word list some does not change its length.\<close>
-
 lemma length_overwrite_cap[simp]: "wf_cap c l \<Longrightarrow> length (overwrite_cap c l r) = length l"
   unfolding wf_cap_def overwrite_cap_def
   apply (auto split:capability.splits list.split prod.split)
   using log_cap_rep_length[of "the \<lceil>l\<rceil>"] by (simp add:log_cap_inv.inv_inj')
-
-text \<open>
-  Introduce type the described capability data as sent in the Register Procedure system call.
-  It is represented as a list of elements, each of which contains some capability type, capability
-  index, and well-formed capability itself.
-\<close>
 
 text \<open>
   Introduce type the described capability data as sent in the Register Procedure system call.
@@ -2989,7 +2969,14 @@ adhoc_overloading abs reg_call_inv.inv2
 
 subsection \<open>Procedure call system call\<close>
 
+text \<open>
+  Data format of the Call Procedure system call is modeled as a direct product of procedure keys
+  and byte lists (representing payload for the procedure).
+\<close>
+
 type_synonym procedure_call_data = "(key \<times> byte list)"
+
+text \<open>Low-level representation of the call data.\<close>
 
 definition "proc_call_rep (cd :: procedure_call_data) (r :: byte list) \<equiv>
   let (k, d) = cd;
@@ -3000,6 +2987,8 @@ adhoc_overloading rep proc_call_rep
 
 lemma word_rsplit_inj[dest]: "word_rsplit a = word_rsplit b \<Longrightarrow> a = b" for a::"'a::len word"
   by (auto dest:arg_cong[where f="word_rcat :: _ \<Rightarrow> 'a word"] simp add:word_rcat_rsplit)
+
+text \<open>Low-level representation is injective.\<close>
 
 lemma proc_call_rep_inj[dest]: "\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>d\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: procedure_call_data
 proof-
@@ -3018,6 +3007,8 @@ proof-
   with d\<^sub>1 and d\<^sub>2 show ?thesis by auto
 qed
 
+text \<open>Representation function is invertible.\<close>
+
 lemmas proc_call_invertible[intro] = invertible2.intro[OF inj2I, OF proc_call_rep_inj]
 
 interpretation proc_call_inv: invertible2 proc_call_rep ..
@@ -3026,10 +3017,21 @@ adhoc_overloading abs proc_call_inv.inv2
 
 subsection \<open>External call system call\<close>
 
+text \<open>
+  Data format of the External Call system call is modeled as a record with three fields:
+  \begin{itemize}
+    \item @{text addr}: account Ethereum address;
+    \item @{text amount}: value amount;
+    \item @{text data}: payload for the contract.
+  \end{itemize}
+\<close>
+
 record external_call_data =
   addr   :: ethereum_address
   amount :: word32
   data   :: "byte list"
+
+text \<open>Low-level representation of the external call data.\<close>
 
 definition "ext_call_rep (d :: external_call_data) (r :: byte list) \<equiv>
   let r' = word_rcat (take (LENGTH(word32) div LENGTH(byte)) r) :: word32 in
@@ -3039,6 +3041,8 @@ definition "ext_call_rep (d :: external_call_data) (r :: byte list) \<equiv>
   @ data d"
 
 adhoc_overloading rep ext_call_rep
+
+text \<open>Low-level representation is injective.\<close>
 
 declare length_split[simp del] length_concat_split[simp del]
 
@@ -3058,6 +3062,8 @@ proof (rule external_call_data.equality)
     by (auto simp add:word_rsplit_len_indep)
 qed simp
 
+text \<open>Representation function is invertible.\<close>
+
 lemmas external_call_invertible[intro] = invertible2.intro[OF inj2I, OF ext_call_rep_inj]
 
 interpretation ext_call_inv: invertible2 ext_call_rep ..
@@ -3066,9 +3072,18 @@ adhoc_overloading abs ext_call_inv.inv2
 
 subsection \<open>Log system call\<close>
 
+text \<open>Log topics format is the same as the log capability format.\<close>
+
 type_synonym log_topics = log_capability
 
+text \<open>
+  Data format of the Log system call is modeled as a direct product of set of log topics and
+  byte lists (representing log value).
+\<close>
+
 type_synonym log_call_data = "log_topics \<times> byte list"
+
+text \<open>Low-level representation of the log call data.\<close>
 
 definition "log_call_rep td r \<equiv>
   let (t, d) = td;
@@ -3079,6 +3094,8 @@ definition "log_call_rep td r \<equiv>
   for td :: log_call_data
 
 adhoc_overloading rep log_call_rep
+
+text \<open>Low-level representation is injective.\<close>
 
 lemma log_call_rep_inj[dest]: "\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>d\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: log_call_data
 proof
@@ -3101,6 +3118,8 @@ proof
     by (auto split:prod.splits simp add:word_rsplit_len_indep)
 qed
 
+text \<open>Representation function is invertible.\<close>
+
 lemmas log_call_invertible[intro] = invertible2.intro[OF inj2I, OF log_call_rep_inj]
 
 interpretation log_call_inv: invertible2 log_call_rep ..
@@ -3109,14 +3128,20 @@ adhoc_overloading abs log_call_inv.inv2
 
 subsection \<open>Delete and Set entry system calls\<close>
 
+text \<open>Data format of the Delete and Set entry system calls are modeled as a single procedure key.\<close>
+
 type_synonym delete_call_data = key
 
 type_synonym set_entry_call_data = key
+
+text \<open>Low-level representation of the delete and set entry calls data.\<close>
 
 definition "proc_key_call_rep k r = [ucast k OR r \<restriction> {LENGTH(key) ..<LENGTH(word32)}]"
   for k :: key and r :: word32
 
 adhoc_overloading rep proc_key_call_rep
+
+text \<open>Low-level representation is injective.\<close>
 
 lemma proc_key_call_rep_inj0[dest]: "\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1 = \<lfloor>d\<^sub>2\<rfloor> r\<^sub>2 \<Longrightarrow> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: key
   unfolding proc_key_call_rep_def by auto
@@ -3130,6 +3155,8 @@ lemma proc_key_call_rep_inj[dest]: "prefix (\<lfloor>d\<^sub>1\<rfloor> r\<^sub>
 
 lemma proc_key_call_rep_indep: "length (\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1) = length (\<lfloor>d\<^sub>2\<rfloor> r\<^sub>2)" for d\<^sub>1 d\<^sub>2 :: key by simp
 
+text \<open>Representation function is invertible.\<close>
+
 lemmas proc_key_call_invertible[intro] =
   invertible2_tf.intro[OF inj2_tfI, OF proc_key_call_rep_inj proc_key_call_rep_indep]
 
@@ -3139,17 +3166,28 @@ adhoc_overloading abs proc_key_call_inv.inv2_tf
 
 subsection \<open>Write system call\<close>
 
+text \<open>
+  Data format of the Write system call is modeled as a direct product of write addresses and write
+  values, both represented as 32-byte machine words.
+\<close>
+
 type_synonym write_call_data = "word32 \<times> word32"
+
+text \<open>Low-level representation of the write call data.\<close>
 
 definition "write_call_rep w _ \<equiv> let (a, v) = w in [a, v]" for w :: write_call_data
 
 adhoc_overloading rep write_call_rep
+
+text \<open>Low-level representation is injective.\<close>
 
 lemma write_call_rep_inj[dest]: "prefix (\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1) (\<lfloor>d\<^sub>2\<rfloor> r\<^sub>2) \<Longrightarrow> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: write_call_data
   unfolding write_call_rep_def by (simp split:prod.splits)
 
 lemma write_call_rep_indep: "length (\<lfloor>d\<^sub>1\<rfloor> r\<^sub>1) = length (\<lfloor>d\<^sub>2\<rfloor> r\<^sub>2)" for d\<^sub>1 d\<^sub>2 :: write_call_data
   unfolding write_call_rep_def by (simp split:prod.split)
+
+text \<open>Representation function is invertible.\<close>
 
 lemmas write_call_invertible[intro] =
   invertible2_tf.intro[OF inj2_tfI, OF write_call_rep_inj write_call_rep_indep]
@@ -3160,19 +3198,43 @@ adhoc_overloading abs write_call_inv.inv2_tf
 
 section \<open>System calls\<close>
 
+subsection \<open>Return and error codes\<close>
+
+text \<open>
+  The result of executing a system call is either Success and a new state of the storage, or Revert.
+\<close>
+
 datatype result =
     Success storage
   | Revert
 
-abbreviation "SYSCALL_NOEXIST \<equiv> 0xaa"
+text \<open>
+  Here are general error codes that are returned by system calls in case of revert in the kernel.
+\<close>
 
-abbreviation "SYSCALL_BADCAP \<equiv> 0x33"
+abbreviation "SYSCALL_BADCAP \<equiv> 0x33"  \<comment> \<open>Capability insufficient.\<close>
 
-abbreviation "SYSCALL_FAIL \<equiv> 0x66"
+abbreviation "SYSCALL_NOGAS \<equiv> 0x44" \<comment> \<open>Procedure execution ran out of gas.\<close>
+
+abbreviation "SYSCALL_REVERT \<equiv> 0x55" \<comment> \<open>The called procedure reverted.\<close>
+
+abbreviation "SYSCALL_FAIL \<equiv> 0x66" \<comment> \<open>The system call failed for specific reasons.\<close>
+
+abbreviation "SYSCALL_NOEXIST \<equiv> 0xaa" \<comment> \<open>Not a valid system call.\<close>
 
 subsection \<open>Register system call\<close>
 
+text \<open>
+  If too many capabilities are provided, the Register Procedure system call fails and returns
+  @{text SYSCALL_FAIL} followed by the @{text REG_TOOMANYCAPS} error code.
+\<close>
+
 abbreviation "REG_TOOMANYCAPS \<equiv> 0x77"
+
+text \<open>
+  Undefined function that is used to validate the contract code at the given address to show that
+  it complies with the requirements of procedure code.
+\<close>
 
 definition "valid_code (_ :: ethereum_address) = undefined"
 
@@ -3186,7 +3248,7 @@ lemma wf_caps: "caps t d = Some c \<Longrightarrow> \<forall> (_, l) \<in> set c
   unfolding caps_def using cap_data_rep'[of "cap_data d"]
   by (auto split:prod.splits if_splits simp add:Let_def)
 
-definition "sub_caps t cs p =
+definition "sub_caps t cs p \<equiv>
    list_all
      (\<lambda> (i :: capability_index, l) \<Rightarrow>
       (case (t, l) of
@@ -3225,6 +3287,23 @@ definition "fill_caps t cs p \<equiv>
        | Send  \<Rightarrow> (i, [\<lfloor>\<lfloor>ext_caps p\<rfloor> ! \<lfloor>i\<rfloor>\<rfloor> (0 :: word32)])
      else         (i, l))
    cs"
+
+text \<open>
+  Register Procedure system call registers a contract as a procedure by adding its key to the
+  procedure list and its data to the procedure heap. But if one of the following is true:
+  \begin{itemize}
+    \item the contract code cannot pass the validation process,
+    \item the call data is malformed,
+    \item there is already a maximum number of registered procedures,
+    \item procedure with the specified key already exists,
+    \item the specified capability index is out of range,
+    \item the capability found by the index does not allow registering this procedure,
+    \item if one of the specified capabilities is not a subset of a one of the capabilities of the
+          procedure performing the system call,
+    \item too many capabilities are provided,
+  \end{itemize}
+  then the kernel performs Revert and returns a specified error code.
+\<close>
 
 definition register :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
   "register i d s \<equiv>
@@ -3286,9 +3365,423 @@ definition register :: "capability_index \<Rightarrow> byte list \<Rightarrow> s
                                                       \<comment> \<open>No cap inclusion\<close>
       | _                                        \<Rightarrow>   (Revert, [SYSCALL_FAIL, REG_TOOMANYCAPS]))"
 
+consts sim :: "'a \<Rightarrow> 'a \<Rightarrow> bool" (infixl "~" 50)
+
+definition "same_explicit_cap t c\<^sub>1 c\<^sub>2 \<equiv> c\<^sub>1 \<noteq> [] \<and> c\<^sub>2 \<noteq> [] \<longrightarrow> same_cap t c\<^sub>1 c\<^sub>2"
+
+definition "sim_register_call d\<^sub>1 d\<^sub>2 \<equiv>
+  proc_key d\<^sub>1 = proc_key d\<^sub>2 \<and>
+  eth_addr d\<^sub>1 = eth_addr d\<^sub>2 \<and>
+  (let caps' = \<lambda> t d. map snd (the (caps t d)) in
+  list_all2 (same_explicit_cap Call) (caps' Call d\<^sub>1) (caps' Call d\<^sub>2) \<and>
+  list_all2 (same_explicit_cap Reg)  (caps' Reg d\<^sub>1) (caps' Reg d\<^sub>2) \<and>
+  list_all2 (same_explicit_cap Del)  (caps' Del d\<^sub>1) (caps' Del d\<^sub>2) \<and>
+  (the (caps Entry d\<^sub>1) = []) = (the (caps Entry d\<^sub>2) = []) \<and>
+  list_all2 (same_explicit_cap Write) (caps' Write d\<^sub>1) (caps' Write d\<^sub>2) \<and>
+  list_all2 (same_explicit_cap Log) (caps' Log d\<^sub>1) (caps' Log d\<^sub>2) \<and>
+  list_all2 (same_explicit_cap Send) (caps' Send d\<^sub>1) (caps' Send d\<^sub>2))"
+
+adhoc_overloading sim sim_register_call
+
+lemma fill_caps_inj_helper:
+  "map snd (fill_caps t c\<^sub>1 p) = map snd (fill_caps t c\<^sub>2 p)
+   \<Longrightarrow> list_all2 (\<lambda> c\<^sub>1 c\<^sub>2. c\<^sub>1 \<noteq> [] \<and> c\<^sub>2 \<noteq> [] \<longrightarrow> c\<^sub>1 = c\<^sub>2) (map snd c\<^sub>1) (map snd c\<^sub>2)"
+proof (induct c\<^sub>1 arbitrary:c\<^sub>2)
+  case Nil
+  thus ?case unfolding fill_caps_def by simp
+next
+  case (Cons x xs)
+  from Cons(2) have "c\<^sub>2 \<noteq> []" unfolding fill_caps_def by auto
+  then obtain y ys where c\<^sub>2:"c\<^sub>2 = y # ys" using list.exhaust by blast
+  from Cons(2) have p0:"map snd (fill_caps t xs p) = map snd (fill_caps t ys p)"
+    unfolding fill_caps_def by (simp add:c\<^sub>2)
+  obtain ix cx iy cy where x:"x = (ix, cx)" and y:"y = (iy, cy)" by (metis surj_pair)
+  from Cons(1)[OF p0] Cons(2)
+  show "list_all2 (\<lambda> c\<^sub>1 c\<^sub>2. c\<^sub>1 \<noteq> [] \<and> c\<^sub>2 \<noteq> [] \<longrightarrow> c\<^sub>1 = c\<^sub>2) (map snd (x # xs)) (map snd c\<^sub>2)"
+    unfolding fill_caps_def by (unfold c\<^sub>2 x y, auto)
+qed
+
+lemma same_cap_triv: "\<lbrakk>wf_cap t c\<^sub>1; wf_cap t c\<^sub>2; c\<^sub>1 = c\<^sub>2\<rbrakk> \<Longrightarrow> same_cap t c\<^sub>1 c\<^sub>2"
+  unfolding same_cap_def wf_cap_def by (auto split: capability.splits list.splits)
+
+lemma fill_caps_inj: "\<lbrakk>list_all (wf_cap t \<circ> snd) c\<^sub>1;
+                       list_all (wf_cap t \<circ> snd) c\<^sub>2;
+                       map snd (fill_caps t c\<^sub>1 p) = map snd (fill_caps t c\<^sub>2 p)\<rbrakk>
+   \<Longrightarrow> list_all2 (same_explicit_cap t) (map snd c\<^sub>1) (map snd c\<^sub>2)"
+  using fill_caps_inj_helper[of t c\<^sub>1 p c\<^sub>2]
+  unfolding same_explicit_cap_def list_all2_conv_all_nth list_all_def
+  by (auto simp add:same_cap_triv)
+
+lemma pref_cap_list_inj:
+  "\<lbrakk>length c\<^sub>1 <  2 ^ LENGTH(8 word) - 1;
+   length c\<^sub>2 <  2 ^ LENGTH(8 word) - 1;
+   t \<in> {Call, Reg, Del};
+   list_all ((\<lambda> c. wf_cap t c \<and> c = overwrite_cap t c (zero_fill c) \<and> c \<noteq> []) \<circ> snd) c\<^sub>1;
+   list_all ((\<lambda> c. wf_cap t c \<and> c = overwrite_cap t c (zero_fill c) \<and> c \<noteq> []) \<circ> snd) c\<^sub>2;
+   (cap_list (map (the \<circ> abs \<circ> hd \<circ> snd) c\<^sub>1) :: prefixed_capability capability_list) =
+    cap_list (map (the \<circ> abs \<circ> hd \<circ> snd) c\<^sub>2)\<rbrakk>
+   \<Longrightarrow> map snd c\<^sub>1 = map snd c\<^sub>2"
+  (is "\<lbrakk>?len\<^sub>1; ?len\<^sub>2; ?t; ?all\<^sub>1; ?all\<^sub>2; ?eq\<rbrakk> \<Longrightarrow> _")
+proof (subst list_eq_iff_nth_eq, intro conjI allI impI)
+  let ?l\<^sub>1 = "map (the \<circ> abs \<circ> hd \<circ> snd) c\<^sub>1 :: prefixed_capability list"
+    and ?l\<^sub>2 =  "map (the \<circ> abs \<circ> hd \<circ> snd) c\<^sub>2 :: prefixed_capability list"
+  assume ?len\<^sub>1 ?len\<^sub>2 ?eq
+  hence eq:"?l\<^sub>1 = ?l\<^sub>2" by (auto iff:cap_list_inject)
+  thus 0:"length (map snd c\<^sub>1) = length (map snd c\<^sub>2)" using map_eq_imp_length_eq by simp
+  {
+    fix i
+    let ?c\<^sub>1 = "snd (c\<^sub>1 ! i)" and ?c\<^sub>2 = "snd (c\<^sub>2 ! i)"
+    assume i:"i < length (map snd c\<^sub>1)"
+    with 0 have i':"i < length (map snd c\<^sub>2)" by simp
+    with eq have eq':"(the \<lceil>hd ?c\<^sub>1\<rceil> :: prefixed_capability) = the \<lceil>hd ?c\<^sub>2\<rceil>"
+      by (auto iff:list_eq_iff_nth_eq)
+    assume ?all\<^sub>1 ?all\<^sub>2
+    with i i' have wf:"wf_cap t ?c\<^sub>1" "wf_cap t ?c\<^sub>2"
+                      "?c\<^sub>1 = overwrite_cap t ?c\<^sub>1 (zero_fill ?c\<^sub>1)"
+                      "?c\<^sub>2 = overwrite_cap t ?c\<^sub>2 (zero_fill ?c\<^sub>2)"
+                      "?c\<^sub>1 \<noteq> []"         "?c\<^sub>2 \<noteq> []"
+      unfolding list_all_def by auto
+    assume ?t
+    with eq' wf i i' show "map snd c\<^sub>1 ! i = map snd c\<^sub>2 ! i"
+      unfolding wf_cap_def overwrite_cap_def by (induct t) (auto split:list.splits)
+  }
+qed
+
+lemma write_cap_list_inj:
+  "\<lbrakk>length c\<^sub>1 <  2 ^ LENGTH(8 word) - 1;
+   length c\<^sub>2 <  2 ^ LENGTH(8 word) - 1;
+   list_all ((\<lambda> c. wf_cap Write c \<and> c = overwrite_cap Write c (zero_fill c) \<and> c \<noteq> []) \<circ> snd) c\<^sub>1;
+   list_all ((\<lambda> c. wf_cap Write c \<and> c = overwrite_cap Write c (zero_fill c) \<and> c \<noteq> []) \<circ> snd) c\<^sub>2;
+   (cap_list (map (\<lambda> (_, [a, s]) \<Rightarrow> the \<lceil>(a, s)\<rceil>) c\<^sub>1) :: write_capability capability_list) =
+    cap_list (map (\<lambda> (_, [a, s]) \<Rightarrow> the \<lceil>(a, s)\<rceil>) c\<^sub>2)\<rbrakk>
+   \<Longrightarrow> map snd c\<^sub>1 = map snd c\<^sub>2"
+  (is "\<lbrakk>?len\<^sub>1; ?len\<^sub>2; list_all (?P \<circ> snd) c\<^sub>1; _; ?eq\<rbrakk> \<Longrightarrow> _")
+proof (subst list_eq_iff_nth_eq, intro conjI allI impI)
+  let ?l\<^sub>1 = "map (\<lambda> (_, [a, s]) \<Rightarrow> the \<lceil>(a, s)\<rceil>) c\<^sub>1 :: write_capability list"
+    and ?l\<^sub>2 =  "map (\<lambda> (_, [a, s]) \<Rightarrow> the \<lceil>(a, s)\<rceil>) c\<^sub>2 :: write_capability list"
+  assume ?len\<^sub>1 ?len\<^sub>2 ?eq
+  hence eq:"?l\<^sub>1 = ?l\<^sub>2" by (auto iff:cap_list_inject)
+  thus 0:"length (map snd c\<^sub>1) = length (map snd c\<^sub>2)" using map_eq_imp_length_eq by simp
+  {
+    fix i
+    let ?c\<^sub>1 = "snd (c\<^sub>1 ! i)" and ?c\<^sub>2 = "snd (c\<^sub>2 ! i)"
+    assume i:"i < length (map snd c\<^sub>1)"
+    with 0 have i':"i < length (map snd c\<^sub>2)" by simp
+    assume "list_all (?P \<circ> snd) c\<^sub>1" "list_all (?P \<circ> snd) c\<^sub>2"
+    hence "?P ?c\<^sub>1" "?P ?c\<^sub>2" unfolding list_all_def using i i' by auto
+    with i i' obtain c1\<^sub>1 c1\<^sub>2 c2\<^sub>1 c2\<^sub>2 where
+      wf:"wf_cap Write ?c\<^sub>1" "wf_cap Write ?c\<^sub>2"
+         "?c\<^sub>1 = overwrite_cap Write ?c\<^sub>1 (zero_fill ?c\<^sub>1)"
+         "?c\<^sub>2 = overwrite_cap Write ?c\<^sub>2 (zero_fill ?c\<^sub>2)"
+         "?c\<^sub>1 = [c1\<^sub>1, c1\<^sub>2]"         "?c\<^sub>2 = [c2\<^sub>1, c2\<^sub>2]"
+      using that[of "?c\<^sub>1 ! 0" "?c\<^sub>1 ! 1" "?c\<^sub>2 ! 0" "?c\<^sub>2 ! 1"] unfolding wf_cap_def
+      by (auto  split:list.splits)
+    have ith:"\<And> l\<^sub>1 l\<^sub>2 i. l\<^sub>1 = l\<^sub>2 \<Longrightarrow> l\<^sub>1 ! i = l\<^sub>2 ! i" by simp
+    from i i' wf ith[OF eq, where i = i] have "(c1\<^sub>1, c1\<^sub>2) = (c2\<^sub>1, c2\<^sub>2)"
+      unfolding wf_cap_def using write_cap_inv.inv_inj' by (auto split:prod.splits)
+    with wf i i' show "map snd c\<^sub>1 ! i = map snd c\<^sub>2 ! i" by simp
+  }
+qed
+
+lemma log_cap_list_inj:
+  "\<lbrakk>length c\<^sub>1 <  2 ^ LENGTH(8 word) - 1;
+   length c\<^sub>2 <  2 ^ LENGTH(8 word) - 1;
+   list_all ((\<lambda> c. wf_cap Log c \<and> c = overwrite_cap Log c (zero_fill c) \<and> c \<noteq> []) \<circ> snd) c\<^sub>1;
+   list_all ((\<lambda> c. wf_cap Log c \<and> c = overwrite_cap Log c (zero_fill c) \<and> c \<noteq> []) \<circ> snd) c\<^sub>2;
+   (cap_list (map (the \<circ> abs \<circ> snd) c\<^sub>1) :: log_capability capability_list) =
+    cap_list (map (the \<circ> abs \<circ> snd) c\<^sub>2)\<rbrakk>
+   \<Longrightarrow> map snd c\<^sub>1 = map snd c\<^sub>2"
+  (is "\<lbrakk>?len\<^sub>1; ?len\<^sub>2; list_all (?P \<circ> snd) c\<^sub>1; _; ?eq\<rbrakk> \<Longrightarrow> _")
+proof (subst list_eq_iff_nth_eq, intro conjI allI impI)
+  let ?l\<^sub>1 = "map (the \<circ> abs \<circ> snd) c\<^sub>1 :: log_capability list"
+    and ?l\<^sub>2 =  "map (the \<circ> abs \<circ> snd) c\<^sub>2 :: log_capability list"
+  assume ?len\<^sub>1 ?len\<^sub>2 ?eq
+  hence eq:"?l\<^sub>1 = ?l\<^sub>2" by (auto iff:cap_list_inject)
+  thus 0:"length (map snd c\<^sub>1) = length (map snd c\<^sub>2)" using map_eq_imp_length_eq by simp
+  {
+    fix i
+    let ?c\<^sub>1 = "snd (c\<^sub>1 ! i)" and ?c\<^sub>2 = "snd (c\<^sub>2 ! i)"
+    assume i:"i < length (map snd c\<^sub>1)"
+    with 0 have i':"i < length (map snd c\<^sub>2)" by simp
+    assume "list_all (?P \<circ> snd) c\<^sub>1" "list_all (?P \<circ> snd) c\<^sub>2"
+    hence "?P ?c\<^sub>1" "?P ?c\<^sub>2" unfolding list_all_def using i i' by auto
+    with i i' have
+      wf:"wf_cap Log ?c\<^sub>1" "wf_cap Log ?c\<^sub>2"
+         "?c\<^sub>1 \<noteq> []"       "?c\<^sub>2 \<noteq> []"
+         "?c\<^sub>1 = overwrite_cap Log ?c\<^sub>1 (zero_fill ?c\<^sub>1)"
+         "?c\<^sub>2 = overwrite_cap Log ?c\<^sub>2 (zero_fill ?c\<^sub>2)"
+    unfolding wf_cap_def by auto
+    have ith:"\<And> l\<^sub>1 l\<^sub>2 i. l\<^sub>1 = l\<^sub>2 \<Longrightarrow> l\<^sub>1 ! i = l\<^sub>2 ! i" by simp
+    from i i' wf ith[OF eq, where i = i] have "?c\<^sub>1 = ?c\<^sub>2"
+      unfolding wf_cap_def using log_cap_inv.inv_inj' by (force split: list.splits)
+    with wf i i' show "map snd c\<^sub>1 ! i = map snd c\<^sub>2 ! i" by simp
+  }
+qed
+
+lemma ext_cap_list_inj:
+  "\<lbrakk>length c\<^sub>1 <  2 ^ LENGTH(8 word) - 1;
+   length c\<^sub>2 <  2 ^ LENGTH(8 word) - 1;
+   list_all ((\<lambda> c. wf_cap Send c \<and> c = overwrite_cap Send c (zero_fill c) \<and> c \<noteq> []) \<circ> snd) c\<^sub>1;
+   list_all ((\<lambda> c. wf_cap Send c \<and> c = overwrite_cap Send c (zero_fill c) \<and> c \<noteq> []) \<circ> snd) c\<^sub>2;
+   (cap_list (map (the \<circ> abs \<circ> hd \<circ> snd) c\<^sub>1) :: external_call_capability capability_list) =
+    cap_list (map (the \<circ> abs \<circ> hd \<circ> snd) c\<^sub>2)\<rbrakk>
+   \<Longrightarrow> map snd c\<^sub>1 = map snd c\<^sub>2"
+  (is "\<lbrakk>?len\<^sub>1; ?len\<^sub>2; ?all\<^sub>1; ?all\<^sub>2; ?eq\<rbrakk> \<Longrightarrow> _")
+proof (subst list_eq_iff_nth_eq, intro conjI allI impI)
+  let ?l\<^sub>1 = "map (the \<circ> abs \<circ> hd \<circ> snd) c\<^sub>1 :: external_call_capability list"
+    and ?l\<^sub>2 =  "map (the \<circ> abs \<circ> hd \<circ> snd) c\<^sub>2 :: external_call_capability list"
+  assume ?len\<^sub>1 ?len\<^sub>2 ?eq
+  hence eq:"?l\<^sub>1 = ?l\<^sub>2" by (auto iff:cap_list_inject)
+  thus 0:"length (map snd c\<^sub>1) = length (map snd c\<^sub>2)" using map_eq_imp_length_eq by simp
+  {
+    fix i
+    let ?c\<^sub>1 = "snd (c\<^sub>1 ! i)" and ?c\<^sub>2 = "snd (c\<^sub>2 ! i)"
+    assume i:"i < length (map snd c\<^sub>1)"
+    with 0 have i':"i < length (map snd c\<^sub>2)" by simp
+    with eq have eq':"(the \<lceil>hd ?c\<^sub>1\<rceil> :: external_call_capability) = the \<lceil>hd ?c\<^sub>2\<rceil>"
+      by (auto iff:list_eq_iff_nth_eq)
+    assume ?all\<^sub>1 ?all\<^sub>2
+    with i i' have wf:"wf_cap Send ?c\<^sub>1" "wf_cap Send ?c\<^sub>2"
+                      "?c\<^sub>1 = overwrite_cap Send ?c\<^sub>1 (zero_fill ?c\<^sub>1)"
+                      "?c\<^sub>2 = overwrite_cap Send ?c\<^sub>2 (zero_fill ?c\<^sub>2)"
+                      "?c\<^sub>1 \<noteq> []"         "?c\<^sub>2 \<noteq> []"
+      unfolding list_all_def by auto
+    with eq' wf i i' show "map snd c\<^sub>1 ! i = map snd c\<^sub>2 ! i"
+      unfolding wf_cap_def overwrite_cap_def by (auto split:list.splits)
+  }
+qed
+
+lemma length_alist_update: "k \<notin> dom (map_of l) \<Longrightarrow> length (AList.update k v l) = length l + 1"
+  by (induct l, auto)
+
+lemma length_alist_update'[simp]:
+  "\<lbrakk>k \<notin> dom (map_of l); length l + 1 \<le> n\<rbrakk> \<Longrightarrow> length (AList.update k v l) \<le> n"
+  using length_alist_update by force
+
+lemma alist_update_eqD'[dest]:
+  "\<lbrakk>AList.update k\<^sub>1 v\<^sub>1 l = AList.update k\<^sub>2 v\<^sub>2 l; k\<^sub>1 \<notin> dom (map_of l); k\<^sub>2 \<notin> dom (map_of l)\<rbrakk>
+   \<Longrightarrow> k\<^sub>1 = k\<^sub>2 \<and> v\<^sub>1 = v\<^sub>2"
+  by (induct l, auto)
+
+lemma dalist_update_eqD'[dest]:
+  "\<lbrakk>DAList.update k\<^sub>1 v\<^sub>1 l = DAList.update k\<^sub>2 v\<^sub>2 l;
+   k\<^sub>1 \<notin> dom (DAList.lookup l); k\<^sub>2 \<notin> dom (DAList.lookup l)\<rbrakk> \<Longrightarrow>
+   k\<^sub>1 = k\<^sub>2 \<and> v\<^sub>1 = v\<^sub>2"
+  by (transfer, auto)
+
+lemma register_inj:
+  "\<lbrakk>register i\<^sub>1 d\<^sub>1 s = (Success s', r\<^sub>1); register i\<^sub>2 d\<^sub>2 s = (Success s', r\<^sub>2)\<rbrakk>
+   \<Longrightarrow> (the \<lceil>cat d\<^sub>1\<rceil> :: register_call_data) ~ the \<lceil>cat d\<^sub>2\<rceil>"
+  unfolding sim_register_call_def Let_def
+proof (intro conjI)
+  assume eq1:"register i\<^sub>1 d\<^sub>1 s = (Success s', r\<^sub>1)"
+     and eq2:"register i\<^sub>2 d\<^sub>2 s = (Success s', r\<^sub>2)"
+
+  let ?d\<^sub>1' = "the \<lceil>cat d\<^sub>1\<rceil> :: register_call_data"
+  and ?d\<^sub>2' = "the \<lceil>cat d\<^sub>2\<rceil> :: register_call_data"
+
+  let ?\<sigma> = "the \<lceil>s\<rceil>"
+  let ?p = "curr_proc' ?\<sigma>"
+
+  from eq1 eq2 have eq:"fst (register i\<^sub>1 d\<^sub>1 s) = fst (register i\<^sub>2 d\<^sub>2 s)" by simp
+
+  note [simp] = Let_def register_def
+
+  from eq1 have 1:"LENGTH(word32) div LENGTH(byte) dvd length d\<^sub>1"
+                  "(\<lceil>cat d\<^sub>1\<rceil> :: register_call_data option) \<noteq> None"
+                  "max_nprocs \<noteq> nprocs ?\<sigma>"
+                  "\<not> has_key (proc_key ?d\<^sub>1') ?\<sigma>"
+                  "\<lfloor>i\<^sub>1\<rfloor> < length \<lfloor>reg_caps ?p\<rfloor>"
+                  "proc_key ?d\<^sub>1' \<in> \<lceil>\<lfloor>reg_caps ?p\<rfloor> ! \<lfloor>i\<^sub>1\<rfloor>\<rceil>"
+                  "valid_code (eth_addr ?d\<^sub>1')"
+                  "caps Call ?d\<^sub>1' \<noteq> None"
+                  "caps Reg ?d\<^sub>1' \<noteq> None"
+                  "caps Del ?d\<^sub>1' \<noteq> None"
+                  "caps Entry ?d\<^sub>1' \<noteq> None"
+                  "caps Write ?d\<^sub>1' \<noteq> None"
+                  "caps Log ?d\<^sub>1' \<noteq> None"
+                  "caps Send ?d\<^sub>1' \<noteq> None"
+                  "sub_caps Call   (the (caps Call ?d\<^sub>1')) ?p \<and>
+                   sub_caps Reg    (the (caps Reg ?d\<^sub>1')) ?p \<and>
+                   sub_caps Del    (the (caps Del ?d\<^sub>1')) ?p \<and>
+                   sub_caps Entry  (the (caps Entry ?d\<^sub>1')) ?p \<and>
+                   sub_caps Write  (the (caps Write ?d\<^sub>1')) ?p \<and>
+                   sub_caps Log    (the (caps Log ?d\<^sub>1')) ?p \<and>
+                   sub_caps Send   (the (caps Send ?d\<^sub>1')) ?p"
+    by (simp_all split:if_splits option.splits)
+
+  from eq2 have 2:"LENGTH(word32) div LENGTH(byte) dvd length d\<^sub>2"
+                  "(\<lceil>cat d\<^sub>2\<rceil> :: register_call_data option) \<noteq> None"
+                  "max_nprocs \<noteq> nprocs ?\<sigma>"
+                  "\<not> has_key (proc_key ?d\<^sub>2') ?\<sigma>"
+                  "\<lfloor>i\<^sub>2\<rfloor> < length \<lfloor>reg_caps ?p\<rfloor>"
+                  "proc_key ?d\<^sub>2' \<in> \<lceil>\<lfloor>reg_caps ?p\<rfloor> ! \<lfloor>i\<^sub>2\<rfloor>\<rceil>"
+                  "valid_code (eth_addr ?d\<^sub>2')"
+                  "caps Call ?d\<^sub>2' \<noteq> None"
+                  "caps Reg ?d\<^sub>2' \<noteq> None"
+                  "caps Del ?d\<^sub>2' \<noteq> None"
+                  "caps Entry ?d\<^sub>2' \<noteq> None"
+                  "caps Write ?d\<^sub>2' \<noteq> None"
+                  "caps Log ?d\<^sub>2' \<noteq> None"
+                  "caps Send ?d\<^sub>2' \<noteq> None"
+                  "sub_caps Call   (the (caps Call ?d\<^sub>2')) ?p \<and>
+                   sub_caps Reg    (the (caps Reg ?d\<^sub>2')) ?p \<and>
+                   sub_caps Del    (the (caps Del ?d\<^sub>2')) ?p \<and>
+                   sub_caps Entry  (the (caps Entry ?d\<^sub>2')) ?p \<and>
+                   sub_caps Write  (the (caps Write ?d\<^sub>2')) ?p \<and>
+                   sub_caps Log    (the (caps Log ?d\<^sub>2')) ?p \<and>
+                   sub_caps Send   (the (caps Send ?d\<^sub>2')) ?p"
+    by (simp_all split:if_splits option.splits)
+
+  from 1
+  have size1[simplified, simp]:"\<And> y v. \<not> has_key (proc_key y) (the \<lceil>s\<rceil>)
+              \<Longrightarrow> length \<lfloor>DAList.update (proc_key y) v \<lfloor>proc_list (the \<lceil>s\<rceil>)\<rfloor>\<rfloor> \<le> max_nprocs"
+    using proc_list_rep[of "kernel.proc_list (the \<lceil>s\<rceil>)"]
+    by (auto simp add:update.rep_eq has_key_def DAList.lookup_def)
+
+  from eq 1 2 have "proc_key ?d\<^sub>1' = proc_key ?d\<^sub>2' \<and> eth_addr ?d\<^sub>1' = eth_addr ?d\<^sub>2'"
+    apply (simp split:if_splits option.splits)
+    apply (drule kernel_rep_inj)
+    apply (rewrite in \<open>\<hole> = (_ :: kernel)\<close> in asm kernel.surjective)
+    apply (rewrite in \<open>(_ :: kernel) = \<hole>\<close> in asm kernel.surjective, simp)
+    by (auto iff:proc_list_inject simp add:has_key_def)
+  thus key:"proc_key ?d\<^sub>1' = proc_key ?d\<^sub>2'" and "eth_addr ?d\<^sub>1' = eth_addr ?d\<^sub>2'" by simp_all
+
+  {
+    fix t
+    let ?c\<^sub>1 = "fill_caps t (the (caps t ?d\<^sub>1')) ?p"
+    let ?c\<^sub>2 = "fill_caps t (the (caps t ?d\<^sub>2')) ?p"
+    have length1[simplified]:"caps t ?d\<^sub>1' \<noteq> None \<Longrightarrow> length ?c\<^sub>1 < 2 ^ LENGTH(8 word) - 1"
+      unfolding caps_def fill_caps_def by (simp split:if_splits)
+    from 1 have length1:"length ?c\<^sub>1 <  2 ^ LENGTH(8 word) - 1"
+      by simp (rule length1, induct t, simp+)
+    have length2[simplified]:"caps t ?d\<^sub>2' \<noteq> None \<Longrightarrow> length ?c\<^sub>2 < 2 ^ LENGTH(8 word) - 1"
+      unfolding caps_def fill_caps_def by (simp split:if_splits)
+    from 2 have length2: "length ?c\<^sub>2 <  2 ^ LENGTH(8 word) - 1"
+      by simp (rule length2, induct t, simp+)
+
+    have [intro]:"\<And> c i l d. ((c, i), l) \<in> set \<lfloor>d :: capability_data\<rfloor> \<Longrightarrow> wf_cap c l"
+      using cap_data_rep' by force
+    have [intro]:
+      "\<And> c i l d. ((c, i), l) \<in> set \<lfloor>d :: capability_data\<rfloor> \<Longrightarrow> l = overwrite_cap c l (zero_fill l)"
+      using cap_data_rep' by force
+    assume t:"t \<noteq> Entry"
+    hence
+      "\<lbrakk>(\<lceil>cat d\<^sub>1\<rceil> :: register_call_data option) \<noteq> None; caps t ?d\<^sub>1' \<noteq> None\<rbrakk>
+       \<Longrightarrow> list_all ((\<lambda> c. wf_cap t c \<and> c = overwrite_cap t c (zero_fill c) \<and> c \<noteq> []) \<circ> snd) ?c\<^sub>1"
+      unfolding list_all_def fill_caps_def caps_def
+      apply (induct t, auto)
+                   apply (simp_all add:wf_cap_def overwrite_cap_def split:prod.splits list.splits)
+          apply (metis write_cap_inv.inv_inj)
+         apply (metis write_cap_inv.inv_inj option.sel prod.inject)
+        apply (metis log_cap_inv.inv_inj)
+       apply (metis log_cap_inv.inv_inj option.sel)
+      by (metis add_is_0 numerals(1) zero_neq_numeral log_cap_rep_length list.size(3))
+    with 1 have
+     all1:"list_all ((\<lambda> c. wf_cap t c \<and> c = overwrite_cap t c (zero_fill c) \<and> c \<noteq> []) \<circ> snd) ?c\<^sub>1"
+      by (induct t, simp_all)
+
+    from t have
+      "\<lbrakk>(\<lceil>cat d\<^sub>2\<rceil> :: register_call_data option) \<noteq> None; caps t ?d\<^sub>2' \<noteq> None\<rbrakk>
+       \<Longrightarrow> list_all ((\<lambda> c. wf_cap t c \<and> c = overwrite_cap t c (zero_fill c) \<and> c \<noteq> []) \<circ> snd) ?c\<^sub>2"
+      unfolding list_all_def fill_caps_def caps_def
+      apply (induct t, auto)
+                   apply (simp_all add:wf_cap_def overwrite_cap_def split:prod.splits list.splits)
+          apply (metis write_cap_inv.inv_inj)
+         apply (metis write_cap_inv.inv_inj option.sel prod.inject)
+        apply (metis log_cap_inv.inv_inj)
+       apply (metis log_cap_inv.inv_inj option.sel)
+      by (metis add_is_0 numerals(1) zero_neq_numeral log_cap_rep_length list.size(3))
+    with 2 have
+     all2:"list_all ((\<lambda> c. wf_cap t c \<and> c = overwrite_cap t c (zero_fill c) \<and> c \<noteq> []) \<circ> snd) ?c\<^sub>2"
+      by (induct t, simp_all)
+
+    have "\<lbrakk>(\<lceil>cat d\<^sub>1\<rceil> :: register_call_data option) \<noteq> None; caps t ?d\<^sub>1' \<noteq> None\<rbrakk> \<Longrightarrow>
+          list_all (wf_cap t \<circ> snd) (the (caps t ?d\<^sub>1'))"
+      unfolding list_all_def caps_def using cap_data_rep' by (auto split:if_splits)
+    with 1 have all3:"list_all (wf_cap t \<circ> snd) (the (caps t ?d\<^sub>1'))" by (induct t, simp_all)
+
+    have "\<lbrakk>(\<lceil>cat d\<^sub>2\<rceil> :: register_call_data option) \<noteq> None; caps t ?d\<^sub>2' \<noteq> None\<rbrakk> \<Longrightarrow>
+          list_all (wf_cap t \<circ> snd) (the (caps t ?d\<^sub>2'))"
+      unfolding list_all_def caps_def using cap_data_rep' by (auto split:if_splits)
+    with 2 have all4:"list_all (wf_cap t \<circ> snd) (the (caps t ?d\<^sub>2'))" by (induct t, simp_all)
+
+    note length1 length2 all1 all2 all3 all4
+  } note ps = this
+
+  note fill = fill_caps_inj[OF ps(5) ps(6), rotated 2]
+
+  note call =  pref_cap_list_inj[where t=Call,
+                                OF ps(1)[of Call] ps(2)[of Call], simplified,
+                                OF ps(3)[of Call], simplified, OF ps(4)[of Call], simplified]
+  note del = pref_cap_list_inj[where t=Del,
+                               OF ps(1)[of Del] ps(2)[of Del], simplified,
+                               OF ps(3)[of Del], simplified, OF ps(4)[of Del], simplified]
+  note reg = pref_cap_list_inj[where t=Reg,
+                               OF ps(1)[of Reg] ps(2)[of Reg], simplified,
+                               OF ps(3)[of Reg], simplified, OF ps(4)[of Reg], simplified]
+  note wri = write_cap_list_inj[OF ps(1)[of Write] ps(2)[of Write], simplified,
+                                  OF ps(3)[of Write], simplified, OF ps(4)[of Write], simplified]
+
+  note log = log_cap_list_inj[OF ps(1)[of Log] ps(2)[of Log], simplified,
+                              OF ps(3)[of Log], simplified, OF ps(4)[of Log], simplified]
+
+  note send = ext_cap_list_inj[OF ps(1)[of Send] ps(2)[of Send], simplified,
+                               OF ps(3)[of Send], simplified, OF ps(4)[of Send], simplified]
+
+  have [dest!]: "\<And> k p\<^sub>1 p\<^sub>2 l\<^sub>1 l\<^sub>2. DAList.update k p\<^sub>1 \<lfloor>l\<^sub>1\<rfloor> = DAList.update k p\<^sub>2 \<lfloor>l\<^sub>2\<rfloor> \<Longrightarrow> p\<^sub>1 = p\<^sub>2"
+    by (auto iff:Alist_inject dest:update_eqD simp add: distinct_update DAList.update_def)
+
+  from eq 1 2 show
+    "list_all2 (same_explicit_cap Call)
+       (map snd (the (caps Call ?d\<^sub>1'))) (map snd (the (caps Call ?d\<^sub>2')))"
+    "list_all2 (same_explicit_cap Reg)
+       (map snd (the (caps Reg ?d\<^sub>1'))) (map snd (the (caps Reg ?d\<^sub>2')))"
+    "list_all2 (same_explicit_cap Del)
+       (map snd (the (caps Del ?d\<^sub>1'))) (map snd (the (caps Del ?d\<^sub>2')))"
+    "list_all2 (same_explicit_cap Write)
+       (map snd (the (caps Write ?d\<^sub>1'))) (map snd (the (caps Write ?d\<^sub>2')))"
+    "list_all2 (same_explicit_cap Log)
+       (map snd (the (caps Log ?d\<^sub>1'))) (map snd (the (caps Log ?d\<^sub>2')))"
+    "list_all2 (same_explicit_cap Send)
+       (map snd (the (caps Send ?d\<^sub>1'))) (map snd (the (caps Send ?d\<^sub>2')))"
+    using key
+    by -
+      (rule fill, rule call reg del wri log send,
+        simp split:if_splits option.splits,
+        drule kernel_rep_inj,
+        rewrite in \<open>\<hole> = (_ :: kernel)\<close> in asm kernel.surjective,
+        rewrite in \<open>(_ :: kernel) = \<hole>\<close> in asm kernel.surjective,
+        (auto iff:proc_list_inject)[3])+
+
+  have [simp]: "fill_caps Entry [] ?p = []" unfolding fill_caps_def by simp
+
+  have [dest]: "\<And> y. fill_caps Entry y ?p = [] \<Longrightarrow> y = []" unfolding fill_caps_def by simp
+
+  from eq 1 2 show "(the (caps Entry ?d\<^sub>1') = []) = (the (caps Entry ?d\<^sub>2') = [])"
+    using key
+    apply (simp split:if_splits option.splits)
+    apply (drule kernel_rep_inj)
+    apply (rewrite in \<open>\<hole> = (_ :: kernel)\<close> in asm kernel.surjective)
+    apply (rewrite in \<open>(_ :: kernel) = \<hole>\<close> in asm kernel.surjective)
+    by (auto iff:proc_list_inject)
+qed
+
 subsection \<open>Delete system call\<close>
 
+text \<open>
+  If the Delete Procedure system call is executed with a procedure key that does not exist,
+  it fails and returns @{text SYSCALL_FAIL} followed by the @{text DEL_NOPROC} error code.
+\<close>
+
 abbreviation "DEL_NOPROC \<equiv> 0x33"
+
+text \<open>
+  Delete Procedure system call deletes a procedure by its key. But if the call data is malformed,
+  the procedure does not exist, the specified capability index is out of range, the capability
+  found by the index does not allow deleting this procedure, then the kernel performs Revert and
+  returns a specified error code.
+\<close>
 
 definition delete :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
   "delete i d s \<equiv>
@@ -3309,7 +3802,118 @@ definition delete :: "capability_index \<Rightarrow> byte list \<Rightarrow> sto
              \<sigma>' = \<sigma> \<lparr> proc_list := procs \<rparr> in
                                                       (Success (\<lfloor>\<sigma>'\<rfloor> s), [])"
 
+definition "sim_delete_call k\<^sub>1 k\<^sub>2 \<equiv> k\<^sub>1 = k\<^sub>2" for k\<^sub>1 k\<^sub>2 :: delete_call_data
+
+adhoc_overloading sim sim_delete_call
+
+lemma delete_inj:
+  "\<lbrakk>delete i\<^sub>1 d\<^sub>1 s = (Success s', r\<^sub>1); delete i\<^sub>2 d\<^sub>2 s = (Success s', r\<^sub>2)\<rbrakk>
+   \<Longrightarrow> (the \<lceil>cat d\<^sub>1\<rceil> :: delete_call_data) ~ the \<lceil>cat d\<^sub>2\<rceil>"
+unfolding sim_delete_call_def
+proof-
+  assume eq1:"delete i\<^sub>1 d\<^sub>1 s = (Success s', r\<^sub>1)"
+     and eq2:"delete i\<^sub>2 d\<^sub>2 s = (Success s', r\<^sub>2)"
+
+  let ?d\<^sub>1' = "the \<lceil>cat d\<^sub>1\<rceil> :: delete_call_data"
+  and ?d\<^sub>2' = "the \<lceil>cat d\<^sub>2\<rceil> :: delete_call_data"
+
+  let ?\<sigma> = "the \<lceil>s\<rceil>"
+  let ?p = "curr_proc' ?\<sigma>"
+
+  from eq1 eq2 have eq:"fst (delete i\<^sub>1 d\<^sub>1 s) = fst (delete i\<^sub>2 d\<^sub>2 s)" by simp
+
+  note [simp] = Let_def delete_def
+
+  from eq1 have 1:"LENGTH(word32) div LENGTH(byte) dvd length d\<^sub>1"
+                  "(\<lceil>cat d\<^sub>1\<rceil> :: delete_call_data option) \<noteq> None"
+                  "has_key ?d\<^sub>1' ?\<sigma>"
+                  "\<lfloor>i\<^sub>1\<rfloor> < length \<lfloor>del_caps ?p\<rfloor>"
+                  "?d\<^sub>1' \<in> \<lceil>\<lfloor>del_caps ?p\<rfloor> ! \<lfloor>i\<^sub>1\<rfloor>\<rceil>"
+    by (simp_all split:if_splits option.splits)
+
+  from eq2 have 2:"LENGTH(word32) div LENGTH(byte) dvd length d\<^sub>2"
+                  "(\<lceil>cat d\<^sub>2\<rceil> :: delete_call_data option) \<noteq> None"
+                  "has_key ?d\<^sub>2' ?\<sigma>"
+                  "\<lfloor>i\<^sub>2\<rfloor> < length \<lfloor>del_caps ?p\<rfloor>"
+                  "?d\<^sub>2' \<in> \<lceil>\<lfloor>del_caps ?p\<rfloor> ! \<lfloor>i\<^sub>2\<rfloor>\<rceil>"
+    by (simp_all split:if_splits option.splits)
+
+
+  {
+    fix k\<^sub>1 k\<^sub>2
+    have inset:"DAList.delete k\<^sub>1 \<lfloor>proc_list (the \<lceil>s\<rceil>)\<rfloor> \<in> {l. size l \<le> max_nprocs}"
+      using AList.length_delete_le[of k\<^sub>1 "\<lfloor>\<lfloor>proc_list (the \<lceil>s\<rceil>)\<rfloor>\<rfloor>"]
+             proc_list_rep[of "proc_list (the \<lceil>s\<rceil>)"]
+      by (simp add:delete.rep_eq)
+    {
+      fix k and l :: "(key \<times> 'a) list"
+      have "\<lbrakk>distinct (map fst l); k \<notin> dom (map_of l)\<rbrakk>
+             \<Longrightarrow> length (filter (\<lambda>(k', _). k \<noteq> k') l) = length l"
+        by (induct l, auto)
+    } note notin = this
+    {
+      fix k and l :: "(key \<times> 'a) list"
+      have "\<lbrakk>distinct (map fst l); k \<in> dom (map_of l)\<rbrakk>
+            \<Longrightarrow> length (filter (\<lambda>(k', _). k \<noteq> k') l) = length l - 1"
+      proof (induct l, simp)
+        case (Cons x xs)
+        thus ?case proof (cases "k = fst x")
+          case True
+          with Cons(2) have p1:"k \<notin> dom (map_of xs)" using image_iff by fastforce
+          from Cons(2) have p0:"distinct (map fst xs)" by simp
+          from True notin[OF p0 p1]
+          show "length (filter (\<lambda>(k', _). k \<noteq> k') (x # xs)) = length (x # xs) - 1" by auto
+        next
+          case False
+          with Cons(3) have p1:"k \<in> dom (map_of xs)" by auto
+          from Cons(2) have p0:"distinct (map fst xs)" by simp
+          from Cons(3) False have "xs \<noteq> []" by auto
+          with Cons(1)[OF p0 p1] False
+          show "length (filter (\<lambda>(k', _). k \<noteq> k') (x # xs)) = length (x # xs) - 1"
+            by auto
+        qed
+      qed
+    } note length = this
+    {
+      fix k and l :: "(key \<times> 'a) list"
+      have "\<lbrakk>filter (\<lambda>(k', _). k\<^sub>1 \<noteq> k') l = filter (\<lambda>(k', _). k\<^sub>2 \<noteq> k') l;
+             k\<^sub>1 \<in> dom (map_of l); k\<^sub>2 \<in> dom (map_of l);
+             distinct (map fst l)\<rbrakk>
+            \<Longrightarrow> k\<^sub>1 = k\<^sub>2"
+        by (induct l, auto split:if_splits)
+          (metis (mono_tags) case_prod_conv list.set_intros(1) mem_Collect_eq set_filter)+
+    } note [dest] = this
+
+    have inj:"\<lbrakk>DAList.delete k\<^sub>1 \<lfloor>kernel.proc_list (the \<lceil>s\<rceil>)\<rfloor> =
+           DAList.delete k\<^sub>2 \<lfloor>kernel.proc_list (the \<lceil>s\<rceil>)\<rfloor>;
+           k\<^sub>1 \<in> dom (DAList.lookup \<lfloor>kernel.proc_list (the \<lceil>s\<rceil>)\<rfloor>);
+           k\<^sub>2 \<in> dom (DAList.lookup \<lfloor>kernel.proc_list (the \<lceil>s\<rceil>)\<rfloor>)\<rbrakk>
+           \<Longrightarrow> k\<^sub>1 = k\<^sub>2"
+      apply (auto iff:Alist_inject simp add:DAList.delete_def, subst (asm) Alist_inject)
+      using impl_of[of "\<lfloor>kernel.proc_list (the \<lceil>s\<rceil>)\<rfloor>"]
+      by ((simp add:distinct_delete)+)[2]
+        (auto simp add:DAList.lookup_def AList.delete_eq distinct_delete)
+    note inset inj
+  } note aux[simplified, simp] = this
+
+  note [dest] = aux(2)
+
+  from eq 1 2 show "?d\<^sub>1' = ?d\<^sub>2'"
+    apply (simp split:option.splits)
+    apply (drule kernel_rep_inj)
+    apply (rewrite in \<open>\<hole> = (_ :: kernel)\<close> in asm kernel.surjective)
+    apply (rewrite in \<open>(_ :: kernel) = \<hole>\<close> in asm kernel.surjective)
+    by (auto iff:proc_list_inject simp add: has_key_def)
+qed
+
 subsection \<open>Write system call\<close>
+
+text \<open>
+  Write system call writes a single 32-byte value under a single 32-byte key in the storage of the
+  kernel instance. But if the call data is malformed, the specified capability index is out of
+  range, or the capability found by the index does not allow writing to the Storage at the
+  specified address, then the kernel performs Revert and returns a specified error code.
+\<close>
 
 definition write_addr :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
   "write_addr i d s \<equiv>
@@ -3327,7 +3931,57 @@ definition write_addr :: "capability_index \<Rightarrow> byte list \<Rightarrow>
        else
                                                       (Success (s (a := v)), [])"
 
+definition "sim_write_call d\<^sub>1 d\<^sub>2 \<equiv> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: write_call_data
+
+definition "relevant_write d s \<equiv> let (a :: word32, v) = the \<lceil>cat d\<rceil> in s a \<noteq> v"
+  for d :: "byte list"
+
+adhoc_overloading sim sim_write_call
+
+lemma write_inj:
+  "\<lbrakk>write_addr i\<^sub>1 d\<^sub>1 s = (Success s', r\<^sub>1); write_addr i\<^sub>2 d\<^sub>2 s = (Success s', r\<^sub>2);
+    relevant_write d\<^sub>1 s; relevant_write d\<^sub>2 s\<rbrakk>
+   \<Longrightarrow> (the \<lceil>cat d\<^sub>1\<rceil> :: write_call_data) ~ the \<lceil>cat d\<^sub>2\<rceil>"
+unfolding sim_write_call_def
+proof-
+  assume eq1:"write_addr i\<^sub>1 d\<^sub>1 s = (Success s', r\<^sub>1)"
+     and eq2:"write_addr i\<^sub>2 d\<^sub>2 s = (Success s', r\<^sub>2)"
+
+  let ?d\<^sub>1' = "the \<lceil>cat d\<^sub>1\<rceil> :: write_call_data"
+  and ?d\<^sub>2' = "the \<lceil>cat d\<^sub>2\<rceil> :: write_call_data"
+
+  let ?\<sigma> = "the \<lceil>s\<rceil>"
+  let ?p = "curr_proc' ?\<sigma>"
+
+  from eq1 eq2 have eq:"fst (write_addr i\<^sub>1 d\<^sub>1 s) = fst (write_addr i\<^sub>2 d\<^sub>2 s)" by simp
+
+  note [simp] = Let_def write_addr_def
+
+  from eq1 have 1:"LENGTH(word32) div LENGTH(byte) dvd length d\<^sub>1"
+                  "(\<lceil>cat d\<^sub>1\<rceil> :: write_call_data option) \<noteq> None"
+                  "\<lfloor>i\<^sub>1\<rfloor> < length \<lfloor>write_caps ?p\<rfloor>"
+                  "fst ?d\<^sub>1' \<in> \<lceil>\<lfloor>write_caps ?p\<rfloor> ! \<lfloor>i\<^sub>1\<rfloor>\<rceil>"
+    by (simp_all split:if_splits prod.splits option.splits)
+
+  from eq2 have 2:"LENGTH(word32) div LENGTH(byte) dvd length d\<^sub>2"
+                  "(\<lceil>cat d\<^sub>2\<rceil> :: write_call_data option) \<noteq> None"
+                  "\<lfloor>i\<^sub>2\<rfloor> < length \<lfloor>write_caps ?p\<rfloor>"
+                  "fst ?d\<^sub>2' \<in> \<lceil>\<lfloor>write_caps ?p\<rfloor> ! \<lfloor>i\<^sub>2\<rfloor>\<rceil>"
+    by (simp_all split:if_splits prod.splits option.splits)
+
+  assume "relevant_write d\<^sub>1 s" "relevant_write d\<^sub>2 s"
+  with eq 1 2 show "?d\<^sub>1' = ?d\<^sub>2'" unfolding relevant_write_def
+    by (simp split:option.splits prod.splits) (metis fun_upd_apply)
+qed
+
 subsection \<open>Set entry system call\<close>
+
+text \<open>
+  Set Entry Procedure system call marks a procedure which should be called first upon receiving
+  a transaction. But if the call data is malformed, the procedure does not exist, the calling
+  procedure does not have capability to set entry procedure, then the kernel performs Revert
+  and returns a specified error code.
+\<close>
 
 definition set_entry :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
   "set_entry i d s \<equiv>
@@ -3348,7 +4002,62 @@ definition set_entry :: "capability_index \<Rightarrow> byte list \<Rightarrow> 
          let \<sigma>' = \<sigma> \<lparr> entry_proc := k \<rparr> in
                                                       (Success (\<lfloor>\<sigma>'\<rfloor> s), [])"
 
+definition "sim_entry_call k\<^sub>1 k\<^sub>2 \<equiv> k\<^sub>1 = k\<^sub>2" for k\<^sub>1 k\<^sub>2 :: set_entry_call_data
+
+definition "relevant_set_entry d s \<equiv> entry_proc (the \<lceil>s\<rceil>) \<noteq> the \<lceil>cat d\<rceil>"
+  for d :: "byte list"
+
+no_adhoc_overloading sim sim_delete_call
+
+adhoc_overloading sim sim_entry_call
+
+lemma set_entry_inj:
+  "\<lbrakk>set_entry i\<^sub>1 d\<^sub>1 s = (Success s', r\<^sub>1); set_entry i\<^sub>2 d\<^sub>2 s = (Success s', r\<^sub>2);
+    relevant_set_entry d\<^sub>1 s; relevant_set_entry d\<^sub>2 s\<rbrakk>
+   \<Longrightarrow> (the \<lceil>cat d\<^sub>1\<rceil> :: set_entry_call_data) ~ the \<lceil>cat d\<^sub>2\<rceil>"
+unfolding sim_entry_call_def
+proof-
+  assume eq1:"set_entry i\<^sub>1 d\<^sub>1 s = (Success s', r\<^sub>1)"
+     and eq2:"set_entry i\<^sub>2 d\<^sub>2 s = (Success s', r\<^sub>2)"
+
+  let ?d\<^sub>1' = "the \<lceil>cat d\<^sub>1\<rceil> :: set_entry_call_data"
+  and ?d\<^sub>2' = "the \<lceil>cat d\<^sub>2\<rceil> :: set_entry_call_data"
+
+  let ?\<sigma> = "the \<lceil>s\<rceil>"
+  let ?p = "curr_proc' ?\<sigma>"
+
+  from eq1 eq2 have eq:"fst (set_entry i\<^sub>1 d\<^sub>1 s) = fst (set_entry i\<^sub>2 d\<^sub>2 s)" by simp
+
+  note [simp] = Let_def set_entry_def
+
+  from eq1 have 1:"LENGTH(word32) div LENGTH(byte) dvd length d\<^sub>1"
+                  "(\<lceil>cat d\<^sub>1\<rceil> :: set_entry_call_data option) \<noteq> None"
+                  "has_key ?d\<^sub>1' ?\<sigma>" "entry_cap ?p"
+    by (simp_all split:if_splits option.splits)
+
+  from eq2 have 2:"LENGTH(word32) div LENGTH(byte) dvd length d\<^sub>2"
+                  "(\<lceil>cat d\<^sub>2\<rceil> :: set_entry_call_data option) \<noteq> None"
+                  "has_key ?d\<^sub>2' ?\<sigma>" "entry_cap ?p"
+    by (simp_all split:if_splits option.splits)
+
+  assume "relevant_set_entry d\<^sub>1 s" "relevant_set_entry d\<^sub>2 s"
+  with eq 1 2 show "?d\<^sub>1' = ?d\<^sub>2'" unfolding relevant_set_entry_def
+    apply auto
+    apply (drule kernel_rep_inj)
+    apply (rewrite in \<open>\<hole> = (_ :: kernel)\<close> in asm kernel.surjective)
+    apply (rewrite in \<open>(_ :: kernel) = \<hole>\<close> in asm kernel.surjective)
+    by simp
+qed
+
 subsection \<open>Log system call\<close>
+
+text \<open>
+  Log system call appends an additional log entry (with a possibly empty list of log topics) to
+  the log series. This call does not change the state of the kernel storage. If the call data
+  is malformed, the specified capability index is out of range, or the capability found by the
+  index does not allow such logging, then the kernel performs Revert and returns a specified
+  error code.
+\<close>
 
 type_synonym log = "(ethereum_address \<times> log_topics \<times> byte list) list"
 
@@ -3368,16 +4077,66 @@ definition log ::
        else
          let log = [(procedure.eth_addr (curr_proc' \<sigma>), ts, l)] in
                                                               ((Success s, []), log)"
+
+definition "sim_log_call d\<^sub>1 d\<^sub>2 \<equiv> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: log_call_data
+
+adhoc_overloading sim sim_log_call
+
+lemma log_inj:
+  "\<lbrakk>log i\<^sub>1 d\<^sub>1 s = ((Success s\<^sub>1', r\<^sub>1), l); log i\<^sub>2 d\<^sub>2 s = ((Success s\<^sub>2', r\<^sub>2), l)\<rbrakk>
+   \<Longrightarrow> (the \<lceil>d\<^sub>1\<rceil> :: log_call_data) ~ the \<lceil>d\<^sub>2\<rceil>"
+unfolding sim_log_call_def
+proof-
+  assume eq1:"log i\<^sub>1 d\<^sub>1 s = ((Success s\<^sub>1', r\<^sub>1), l)"
+     and eq2:"log i\<^sub>2 d\<^sub>2 s = ((Success s\<^sub>2', r\<^sub>2), l)"
+
+  let ?d\<^sub>1' = "the \<lceil>d\<^sub>1\<rceil> :: log_call_data"
+  and ?d\<^sub>2' = "the \<lceil>d\<^sub>2\<rceil> :: log_call_data"
+
+  let ?\<sigma> = "the \<lceil>s\<rceil>"
+  let ?p = "curr_proc' ?\<sigma>"
+
+  from eq1 eq2 have eq:"snd (log i\<^sub>1 d\<^sub>1 s) = snd (log i\<^sub>2 d\<^sub>2 s)" by simp
+
+  note [simp] = Let_def log_def
+
+  from eq1 have 1:"(\<lceil>d\<^sub>1\<rceil> :: log_call_data option) \<noteq> None"
+                  "\<lfloor>i\<^sub>1\<rfloor> < length \<lfloor>log_caps ?p\<rfloor>"
+                  "\<lfloor>fst ?d\<^sub>1'\<rfloor> \<in> \<lceil>\<lfloor>log_caps ?p\<rfloor> ! \<lfloor>i\<^sub>1\<rfloor>\<rceil>"
+    by (simp_all split:if_splits prod.splits option.splits)
+
+  from eq2 have 2:"(\<lceil>d\<^sub>2\<rceil> :: log_call_data option) \<noteq> None"
+                  "\<lfloor>i\<^sub>2\<rfloor> < length \<lfloor>log_caps ?p\<rfloor>"
+                  "\<lfloor>fst ?d\<^sub>2'\<rfloor> \<in> \<lceil>\<lfloor>log_caps ?p\<rfloor> ! \<lfloor>i\<^sub>2\<rfloor>\<rceil>"
+    by (simp_all split:if_splits prod.splits option.splits)
+
+  with eq 1 2 show "?d\<^sub>1' = ?d\<^sub>2'"
+    by (simp split:option.splits prod.splits)
+qed
+
 subsection \<open>Call system call\<close>
 
-abbreviation "SYSCALL_NOGAS \<equiv> 0x44"
-
-abbreviation "SYSCALL_REVERT \<equiv> 0x55"
+text \<open>
+  If the Procedure Call system call is executed with a procedure key that does not exist,
+  it fails and returns @{text SYSCALL_FAIL} followed by the @{text CALL_NOPROC} error code.
+\<close>
 
 abbreviation "CALL_NOPROC \<equiv> 0x33"
 
+text \<open>
+  Undefined function @{text exec_call} models the execution of a called procedure. The procedure
+  either returns Success and some new storage state, reverts due to an error, or runs out of gas.
+\<close>
+
 definition exec_call :: "[key, byte list, storage] \<Rightarrow> result option \<times> byte list"
   where "exec_call k d s \<equiv> undefined"
+
+text \<open>
+  Procedure Call system call calls a procedure with a specified key. But if the call data is
+  malformed, the procedure does not exist, the specified capability index is out of range,
+  the capability found by the index does not allow calling this procedure, then the kernel performs
+  Revert and returns a specified error code.
+\<close>
 
 definition call :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
   "call i d s \<equiv>
@@ -3397,11 +4156,66 @@ definition call :: "capability_index \<Rightarrow> byte list \<Rightarrow> stora
          | (Some (Success s), r)                 \<Rightarrow>   (Success s, r)
          | (Some Revert,      r)                 \<Rightarrow>   (Revert, SYSCALL_REVERT # r))"
 
+definition "sim_proc_call d\<^sub>1 d\<^sub>2 \<equiv> d\<^sub>1 = d\<^sub>2" for d\<^sub>1 d\<^sub>2 :: procedure_call_data
+
+adhoc_overloading sim sim_proc_call
+
+lemma call_inj:
+  "\<lbrakk>call i\<^sub>1 d\<^sub>1 s = (Success s', r); call i\<^sub>2 d\<^sub>2 s = (Success s', r);
+    \<And> k\<^sub>1 a\<^sub>1 k\<^sub>2 a\<^sub>2. \<lbrakk>exec_call k\<^sub>1 a\<^sub>1 s = (Some (Success s'), r);
+                   exec_call k\<^sub>2 a\<^sub>2 s = (Some (Success s'), r)\<rbrakk>
+    \<Longrightarrow> a\<^sub>1 = a\<^sub>2 \<and> k\<^sub>1 = k\<^sub>2\<rbrakk>
+   \<Longrightarrow> (the \<lceil>d\<^sub>1\<rceil> :: procedure_call_data) ~ the \<lceil>d\<^sub>2\<rceil>"
+unfolding sim_proc_call_def
+proof-
+  assume eq1:"call i\<^sub>1 d\<^sub>1 s = (Success s', r)"
+     and eq2:"call i\<^sub>2 d\<^sub>2 s = (Success s', r)"
+
+  let ?d\<^sub>1' = "the \<lceil>d\<^sub>1\<rceil> :: procedure_call_data"
+  and ?d\<^sub>2' = "the \<lceil>d\<^sub>2\<rceil> :: procedure_call_data"
+
+  let ?\<sigma> = "the \<lceil>s\<rceil>"
+  let ?p = "curr_proc' ?\<sigma>"
+
+  note [simp] = Let_def call_def
+
+  from eq1 have 1:"(\<lceil>d\<^sub>1\<rceil> :: procedure_call_data option) \<noteq> None"
+                  "has_key (fst ?d\<^sub>1') ?\<sigma>"
+                  "\<lfloor>i\<^sub>1\<rfloor> < length \<lfloor>call_caps ?p\<rfloor>"
+                  "fst ?d\<^sub>1' \<in> \<lceil>\<lfloor>call_caps ?p\<rfloor> ! \<lfloor>i\<^sub>1\<rfloor>\<rceil>"
+    by (simp_all split:if_splits prod.splits option.splits)
+
+  from eq2 have 2:"(\<lceil>d\<^sub>2\<rceil> :: procedure_call_data option) \<noteq> None"
+                  "has_key (fst ?d\<^sub>2') ?\<sigma>"
+                  "\<lfloor>i\<^sub>2\<rfloor> < length \<lfloor>call_caps ?p\<rfloor>"
+                  "fst ?d\<^sub>2' \<in> \<lceil>\<lfloor>call_caps ?p\<rfloor> ! \<lfloor>i\<^sub>2\<rfloor>\<rceil>"
+    by (simp_all split:if_splits prod.splits option.splits)
+
+  assume "\<And> k\<^sub>1 a\<^sub>1 k\<^sub>2 a\<^sub>2.
+          \<lbrakk>exec_call k\<^sub>1 a\<^sub>1 s = (Some (Success s'), r); exec_call k\<^sub>2 a\<^sub>2 s = (Some (Success s'), r)\<rbrakk>
+          \<Longrightarrow> a\<^sub>1 = a\<^sub>2 \<and> k\<^sub>1 = k\<^sub>2"
+  with eq1 eq2 1 2 show "?d\<^sub>1' = ?d\<^sub>2'"
+    by (simp split:prod.splits if_splits option.splits result.splits)
+qed
+
 subsection \<open>External system call\<close>
+
+text \<open>
+  Undefined function @{text exec_ext} models the execution of a called external contract. The
+  contract either returns Success and some new storage state, reverts due to an error, or runs
+  out of gas.
+\<close>
 
 definition exec_ext ::
   "[ethereum_address, word32, byte list, storage] \<Rightarrow> result option \<times> byte list"
   where "exec_ext a v d s \<equiv> undefined"
+
+text \<open>
+  External Call system call calls a contract with a specified Ethereum address. But if the call
+  data is malformed, the contract does not exist, the specified capability index is out of range,
+  the capability found by the index does not allow calling this procedure, then the kernel performs
+  Revert and returns a specified error code.
+\<close>
 
 definition external :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
   "external i d s \<equiv>
@@ -3421,6 +4235,46 @@ definition external :: "capability_index \<Rightarrow> byte list \<Rightarrow> s
          | (Some (Success s), r)                 \<Rightarrow>   (Success s, r)
          | (Some Revert,      r)                 \<Rightarrow>   (Revert, SYSCALL_REVERT # r))"
 
+definition "sim_ext_call d\<^sub>1 d\<^sub>2 \<equiv> addr d\<^sub>1 = addr d\<^sub>2 \<and> data d\<^sub>1 = data d\<^sub>2"
+
+adhoc_overloading sim sim_ext_call
+
+lemma ext_call_inj:
+  "\<lbrakk>external i\<^sub>1 d\<^sub>1 s = (Success s', r); external i\<^sub>2 d\<^sub>2 s = (Success s', r);
+    \<And> a\<^sub>1 g\<^sub>1 d\<^sub>1 a\<^sub>2 g\<^sub>2 d\<^sub>2. \<lbrakk>exec_ext a\<^sub>1 g\<^sub>1 d\<^sub>1 s = (Some (Success s'), r);
+                         exec_ext a\<^sub>2 g\<^sub>2 d\<^sub>2 s = (Some (Success s'), r)\<rbrakk>
+    \<Longrightarrow> a\<^sub>1 = a\<^sub>2 \<and> d\<^sub>1 = d\<^sub>2\<rbrakk>
+   \<Longrightarrow> (the \<lceil>d\<^sub>1\<rceil> :: external_call_data) ~ the \<lceil>d\<^sub>2\<rceil>"
+unfolding sim_ext_call_def
+proof-
+  assume eq1:"external i\<^sub>1 d\<^sub>1 s = (Success s', r)"
+     and eq2:"external i\<^sub>2 d\<^sub>2 s = (Success s', r)"
+
+  let ?d\<^sub>1' = "the \<lceil>d\<^sub>1\<rceil> :: external_call_data"
+  and ?d\<^sub>2' = "the \<lceil>d\<^sub>2\<rceil> :: external_call_data"
+
+  let ?\<sigma> = "the \<lceil>s\<rceil>"
+  let ?p = "curr_proc' ?\<sigma>"
+
+  note [simp] = Let_def external_def
+
+  from eq1 have 1:"(\<lceil>d\<^sub>1\<rceil> :: external_call_data option) \<noteq> None"
+                  "\<lfloor>i\<^sub>1\<rfloor> < length \<lfloor>ext_caps ?p\<rfloor>"
+                  "(addr ?d\<^sub>1', amount ?d\<^sub>1') \<in> \<lceil>\<lfloor>ext_caps ?p\<rfloor> ! \<lfloor>i\<^sub>1\<rfloor>\<rceil>"
+    by (simp_all split:if_splits option.splits)
+
+  from eq2 have 2:"(\<lceil>d\<^sub>2\<rceil> :: external_call_data option) \<noteq> None"
+                  "\<lfloor>i\<^sub>2\<rfloor> < length \<lfloor>ext_caps ?p\<rfloor>"
+                  "(addr ?d\<^sub>2', amount ?d\<^sub>2') \<in> \<lceil>\<lfloor>ext_caps ?p\<rfloor> ! \<lfloor>i\<^sub>2\<rfloor>\<rceil>"
+    by (simp_all split:if_splits option.splits)
+
+  assume "\<And> a\<^sub>1 g\<^sub>1 d\<^sub>1 a\<^sub>2 g\<^sub>2 d\<^sub>2. \<lbrakk>exec_ext a\<^sub>1 g\<^sub>1 d\<^sub>1 s = (Some (Success s'), r);
+                               exec_ext a\<^sub>2 g\<^sub>2 d\<^sub>2 s = (Some (Success s'), r)\<rbrakk>
+            \<Longrightarrow> a\<^sub>1 = a\<^sub>2 \<and> d\<^sub>1 = d\<^sub>2"
+  with eq1 eq2 1 2 show "addr ?d\<^sub>1' = addr ?d\<^sub>2' \<and> data ?d\<^sub>1' = data ?d\<^sub>2'"
+    by (simp split:prod.splits if_splits option.splits result.splits)
+qed
+
 definition "cap_type_opt_rep c \<equiv> case c of Some c \<Rightarrow> \<lfloor>c\<rfloor> | None \<Rightarrow> 0x00"
   for c :: "capability option"
 
@@ -3434,6 +4288,11 @@ lemmas cap_type_opt_invertible[intro] = invertible.intro[OF cap_type_opt_rep_inj
 interpretation cap_type_opt_inv: invertible cap_type_opt_rep ..
 
 adhoc_overloading abs cap_type_opt_inv.inv
+
+text \<open>
+  @{text execute} function models a single state-changing transition as executing of one of the
+  system calls.
+\<close>
 
 definition execute :: "byte list \<Rightarrow> storage \<Rightarrow> (result \<times> byte list) \<times> log" where
   "execute c s \<equiv> case takefill 0x00 2 c of ct # ci # c \<Rightarrow>
@@ -3454,6 +4313,11 @@ definition execute :: "byte list \<Rightarrow> storage \<Rightarrow> (result \<t
 
 section \<open>Initialization\<close>
 
+text \<open>
+  State of the storage before the initialization: no current procedure, no entry procedure, and
+  the procedure list is empty.
+\<close>
+
 definition "empty_kernel \<equiv>
           \<lparr>  curr_proc  = 0,
              entry_proc = 0,
@@ -3467,6 +4331,13 @@ definition "filled_caps t cs =
       | (_,     []) \<Rightarrow> False
       | (_,      _) \<Rightarrow> True))
      cs"
+
+text \<open>
+  Initialisation process is similar to Register Procedure system call: it shares the same format of
+  the call data. The difference is following: a registered procedure also becomes and entry
+  procedure, its capabilities are not checked for subsets, and since there is no registered
+  procedures in the kernel before initialisation, some related checks are also skipped.
+\<close>
 
 definition init :: "capability_index \<Rightarrow> byte list \<Rightarrow> storage \<Rightarrow> result \<times> byte list" where
   "init i d s \<equiv>
@@ -3508,5 +4379,241 @@ definition init :: "capability_index \<Rightarrow> byte list \<Rightarrow> stora
          else                                         (Revert, [SYSCALL_BADCAP])
                                                       \<comment> \<open>Some parent caps were specified\<close>
       | _                                        \<Rightarrow>   (Revert, [SYSCALL_FAIL, REG_TOOMANYCAPS]))"
+
+definition "sim_init_call d\<^sub>1 d\<^sub>2 \<equiv>
+  proc_key d\<^sub>1 = proc_key d\<^sub>2 \<and>
+  eth_addr d\<^sub>1 = eth_addr d\<^sub>2 \<and>
+  (let caps' = \<lambda> t d. map snd (the (caps t d)) in
+  list_all2 (same_cap Call) (caps' Call d\<^sub>1) (caps' Call d\<^sub>2) \<and>
+  list_all2 (same_cap Reg)  (caps' Reg d\<^sub>1) (caps' Reg d\<^sub>2) \<and>
+  list_all2 (same_cap Del)  (caps' Del d\<^sub>1) (caps' Del d\<^sub>2) \<and>
+  (the (caps Entry d\<^sub>1) = []) = (the (caps Entry d\<^sub>2) = []) \<and>
+  list_all2 (same_cap Write) (caps' Write d\<^sub>1) (caps' Write d\<^sub>2) \<and>
+  list_all2 (same_cap Log) (caps' Log d\<^sub>1) (caps' Log d\<^sub>2) \<and>
+  list_all2 (same_cap Send) (caps' Send d\<^sub>1) (caps' Send d\<^sub>2))"
+
+no_adhoc_overloading sim sim_register_call
+
+adhoc_overloading sim sim_init_call
+
+lemma init_inj:
+  "\<lbrakk>init i\<^sub>1 d\<^sub>1 s = (Success s', r\<^sub>1); init i\<^sub>2 d\<^sub>2 s = (Success s', r\<^sub>2)\<rbrakk>
+   \<Longrightarrow> (the \<lceil>cat d\<^sub>1\<rceil> :: register_call_data) ~ the \<lceil>cat d\<^sub>2\<rceil>"
+  unfolding sim_init_call_def Let_def
+proof (intro conjI)
+  assume eq1:"init i\<^sub>1 d\<^sub>1 s = (Success s', r\<^sub>1)"
+     and eq2:"init i\<^sub>2 d\<^sub>2 s = (Success s', r\<^sub>2)"
+
+  let ?d\<^sub>1' = "the \<lceil>cat d\<^sub>1\<rceil> :: register_call_data"
+  and ?d\<^sub>2' = "the \<lceil>cat d\<^sub>2\<rceil> :: register_call_data"
+
+  from eq1 eq2 have eq:"fst (init i\<^sub>1 d\<^sub>1 s) = fst (init i\<^sub>2 d\<^sub>2 s)" by simp
+
+  note [simp] = Let_def init_def
+
+  from eq1 have 1:"LENGTH(word32) div LENGTH(byte) dvd length d\<^sub>1"
+                  "(\<lceil>cat d\<^sub>1\<rceil> :: register_call_data option) \<noteq> None"
+                  "max_nprocs \<noteq> nprocs empty_kernel"
+                  "\<not> has_key (proc_key ?d\<^sub>1') empty_kernel"
+                  "valid_code (eth_addr ?d\<^sub>1')"
+                  "caps Call ?d\<^sub>1' \<noteq> None"
+                  "caps Reg ?d\<^sub>1' \<noteq> None"
+                  "caps Del ?d\<^sub>1' \<noteq> None"
+                  "caps Entry ?d\<^sub>1' \<noteq> None"
+                  "caps Write ?d\<^sub>1' \<noteq> None"
+                  "caps Log ?d\<^sub>1' \<noteq> None"
+                  "caps Send ?d\<^sub>1' \<noteq> None"
+                  "filled_caps Call   (the (caps Call ?d\<^sub>1')) \<and>
+                   filled_caps Reg    (the (caps Reg ?d\<^sub>1')) \<and>
+                   filled_caps Del    (the (caps Del ?d\<^sub>1')) \<and>
+                   filled_caps Entry  (the (caps Entry ?d\<^sub>1')) \<and>
+                   filled_caps Write  (the (caps Write ?d\<^sub>1')) \<and>
+                   filled_caps Log    (the (caps Log ?d\<^sub>1')) \<and>
+                   filled_caps Send   (the (caps Send ?d\<^sub>1'))"
+    unfolding empty_kernel_def
+    by (simp_all split:if_splits option.splits add:has_key_def proc_list_inverse DAList.lookup_def)
+
+
+  from eq2 have 2:"LENGTH(word32) div LENGTH(byte) dvd length d\<^sub>2"
+                  "(\<lceil>cat d\<^sub>2\<rceil> :: register_call_data option) \<noteq> None"
+                  "max_nprocs \<noteq> nprocs empty_kernel"
+                  "\<not> has_key (proc_key ?d\<^sub>2') empty_kernel"
+                  "valid_code (eth_addr ?d\<^sub>2')"
+                  "caps Call ?d\<^sub>2' \<noteq> None"
+                  "caps Reg ?d\<^sub>2' \<noteq> None"
+                  "caps Del ?d\<^sub>2' \<noteq> None"
+                  "caps Entry ?d\<^sub>2' \<noteq> None"
+                  "caps Write ?d\<^sub>2' \<noteq> None"
+                  "caps Log ?d\<^sub>2' \<noteq> None"
+                  "caps Send ?d\<^sub>2' \<noteq> None"
+                  "filled_caps Call   (the (caps Call ?d\<^sub>2')) \<and>
+                   filled_caps Reg    (the (caps Reg ?d\<^sub>2')) \<and>
+                   filled_caps Del    (the (caps Del ?d\<^sub>2')) \<and>
+                   filled_caps Entry  (the (caps Entry ?d\<^sub>2')) \<and>
+                   filled_caps Write  (the (caps Write ?d\<^sub>2')) \<and>
+                   filled_caps Log    (the (caps Log ?d\<^sub>2')) \<and>
+                   filled_caps Send   (the (caps Send ?d\<^sub>2'))"
+    unfolding empty_kernel_def
+    by (simp_all split:if_splits option.splits add:has_key_def proc_list_inverse DAList.lookup_def)
+
+  from 1
+  have size1[simplified, simp]:
+    "\<And> y v. length \<lfloor>DAList.update (proc_key y) v \<lfloor>proc_list empty_kernel\<rfloor>\<rfloor> \<le> max_nprocs"
+    unfolding empty_kernel_def
+    by (auto simp add: DAList.update.rep_eq proc_list_inverse)
+
+  from eq 1 2 have "proc_key ?d\<^sub>1' = proc_key ?d\<^sub>2' \<and> eth_addr ?d\<^sub>1' = eth_addr ?d\<^sub>2'"
+    apply (simp split:if_splits option.splits)
+    apply (drule kernel_rep_inj)
+    apply (rewrite in \<open>\<hole> = (_ :: kernel)\<close> in asm kernel.surjective)
+    apply (rewrite in \<open>(_ :: kernel) = \<hole>\<close> in asm kernel.surjective, simp)
+    by (auto iff:proc_list_inject simp add:has_key_def)
+  thus key:"proc_key ?d\<^sub>1' = proc_key ?d\<^sub>2'" and "eth_addr ?d\<^sub>1' = eth_addr ?d\<^sub>2'" by simp_all
+
+  {
+    fix t
+    let ?c\<^sub>1 = "the (caps t ?d\<^sub>1')"
+    let ?c\<^sub>2 = "the (caps t ?d\<^sub>2')"
+    have length1[simplified]:"caps t ?d\<^sub>1' \<noteq> None \<Longrightarrow> length ?c\<^sub>1 < 2 ^ LENGTH(8 word) - 1"
+      unfolding caps_def fill_caps_def by (simp split:if_splits)
+    from 1 have length1:"length ?c\<^sub>1 <  2 ^ LENGTH(8 word) - 1"
+      by simp (rule length1, induct t, simp+)
+    have length2[simplified]:"caps t ?d\<^sub>2' \<noteq> None \<Longrightarrow> length ?c\<^sub>2 < 2 ^ LENGTH(8 word) - 1"
+      unfolding caps_def fill_caps_def by (simp split:if_splits)
+    from 2 have length2: "length ?c\<^sub>2 <  2 ^ LENGTH(8 word) - 1"
+      by simp (rule length2, induct t, simp+)
+
+    have [intro]:"\<And> c i l d. ((c, i), l) \<in> set \<lfloor>d :: capability_data\<rfloor> \<Longrightarrow> wf_cap c l"
+      using cap_data_rep' by force
+    have [intro]:
+      "\<And> c i l d. ((c, i), l) \<in> set \<lfloor>d :: capability_data\<rfloor> \<Longrightarrow> l = overwrite_cap c l (zero_fill l)"
+      using cap_data_rep' by force
+    assume t:"t \<noteq> Entry"
+    hence
+      "\<lbrakk>(\<lceil>cat d\<^sub>1\<rceil> :: register_call_data option) \<noteq> None; caps t ?d\<^sub>1' \<noteq> None; filled_caps t ?c\<^sub>1\<rbrakk>
+       \<Longrightarrow> list_all ((\<lambda> c. wf_cap t c \<and> c = overwrite_cap t c (zero_fill c) \<and> c \<noteq> []) \<circ> snd) ?c\<^sub>1"
+      unfolding caps_def
+      by (induct t,  auto simp add:filled_caps_def list_all_def split:list.splits)
+    with 1 have
+     all1:"list_all ((\<lambda> c. wf_cap t c \<and> c = overwrite_cap t c (zero_fill c) \<and> c \<noteq> []) \<circ> snd) ?c\<^sub>1"
+      by (induct t, simp_all)
+
+    from t have
+      "\<lbrakk>(\<lceil>cat d\<^sub>2\<rceil> :: register_call_data option) \<noteq> None; caps t ?d\<^sub>2' \<noteq> None; filled_caps t ?c\<^sub>2\<rbrakk>
+       \<Longrightarrow> list_all ((\<lambda> c. wf_cap t c \<and> c = overwrite_cap t c (zero_fill c) \<and> c \<noteq> []) \<circ> snd) ?c\<^sub>2"
+      unfolding caps_def
+      by (induct t,  auto simp add:filled_caps_def list_all_def split:list.splits)
+    with 2 have
+     all2:"list_all ((\<lambda> c. wf_cap t c \<and> c = overwrite_cap t c (zero_fill c) \<and> c \<noteq> []) \<circ> snd) ?c\<^sub>2"
+      by (induct t, simp_all)
+
+    have "\<And> p. filled_caps t ?c\<^sub>1 \<Longrightarrow> fill_caps t ?c\<^sub>1 p = ?c\<^sub>1"
+      unfolding filled_caps_def fill_caps_def list_all_def
+      by (induct t) (auto intro!:map_idI split:list.splits prod.splits)
+    with 1 have eq1:"\<And> p. fill_caps t ?c\<^sub>1 p = ?c\<^sub>1" by (induct t, auto)
+
+    have "\<And> p. filled_caps t ?c\<^sub>2 \<Longrightarrow> fill_caps t ?c\<^sub>2 p = ?c\<^sub>2"
+      unfolding filled_caps_def fill_caps_def list_all_def
+      by (induct t) (auto intro!:map_idI split:list.splits prod.splits)
+    with 2 have eq2:"\<And> p. fill_caps t ?c\<^sub>2 p = ?c\<^sub>2" by (induct t, auto)
+
+    have "\<lbrakk>(\<lceil>cat d\<^sub>1\<rceil> :: register_call_data option) \<noteq> None; caps t ?d\<^sub>1' \<noteq> None\<rbrakk> \<Longrightarrow>
+          list_all (wf_cap t \<circ> snd) (the (caps t ?d\<^sub>1'))"
+      unfolding list_all_def caps_def using cap_data_rep' by (auto split:if_splits)
+    with 1 have all3:"list_all (wf_cap t \<circ> snd) (the (caps t ?d\<^sub>1'))" by (induct t, simp_all)
+
+    have "\<lbrakk>(\<lceil>cat d\<^sub>2\<rceil> :: register_call_data option) \<noteq> None; caps t ?d\<^sub>2' \<noteq> None\<rbrakk> \<Longrightarrow>
+          list_all (wf_cap t \<circ> snd) (the (caps t ?d\<^sub>2'))"
+      unfolding list_all_def caps_def using cap_data_rep' by (auto split:if_splits)
+    with 2 have all4:"list_all (wf_cap t \<circ> snd) (the (caps t ?d\<^sub>2'))" by (induct t, simp_all)
+
+    note length1 length2 all1 all2 all3 all4 eq1 eq2
+  } note ps = this
+
+  note fill = fill_caps_inj[OF ps(5) ps(6), rotated 2]
+
+  note call =  pref_cap_list_inj[where t=Call,
+                                OF ps(1)[of Call] ps(2)[of Call], simplified,
+                                OF ps(3)[of Call], simplified, OF ps(4)[of Call], simplified]
+  note del = pref_cap_list_inj[where t=Del,
+                               OF ps(1)[of Del] ps(2)[of Del], simplified,
+                               OF ps(3)[of Del], simplified, OF ps(4)[of Del], simplified]
+  note reg = pref_cap_list_inj[where t=Reg,
+                               OF ps(1)[of Reg] ps(2)[of Reg], simplified,
+                               OF ps(3)[of Reg], simplified, OF ps(4)[of Reg], simplified]
+  note wri = write_cap_list_inj[OF ps(1)[of Write] ps(2)[of Write], simplified,
+                                  OF ps(3)[of Write], simplified, OF ps(4)[of Write], simplified]
+
+  note log = log_cap_list_inj[OF ps(1)[of Log] ps(2)[of Log], simplified,
+                              OF ps(3)[of Log], simplified, OF ps(4)[of Log], simplified]
+
+  note send = ext_cap_list_inj[OF ps(1)[of Send] ps(2)[of Send], simplified,
+                               OF ps(3)[of Send], simplified, OF ps(4)[of Send], simplified]
+
+  have [dest!]: "\<And> k p\<^sub>1 p\<^sub>2 l\<^sub>1 l\<^sub>2. DAList.update k p\<^sub>1 \<lfloor>l\<^sub>1\<rfloor> = DAList.update k p\<^sub>2 \<lfloor>l\<^sub>2\<rfloor> \<Longrightarrow> p\<^sub>1 = p\<^sub>2"
+    by (auto iff:Alist_inject dest:update_eqD simp add: distinct_update DAList.update_def)
+
+  from eq 1 2 have
+    all:"list_all2 (same_explicit_cap Call)
+       (map snd (the (caps Call ?d\<^sub>1'))) (map snd (the (caps Call ?d\<^sub>2')))"
+    "list_all2 (same_explicit_cap Reg)
+       (map snd (the (caps Reg ?d\<^sub>1'))) (map snd (the (caps Reg ?d\<^sub>2')))"
+    "list_all2 (same_explicit_cap Del)
+       (map snd (the (caps Del ?d\<^sub>1'))) (map snd (the (caps Del ?d\<^sub>2')))"
+    "list_all2 (same_explicit_cap Write)
+       (map snd (the (caps Write ?d\<^sub>1'))) (map snd (the (caps Write ?d\<^sub>2')))"
+    "list_all2 (same_explicit_cap Log)
+       (map snd (the (caps Log ?d\<^sub>1'))) (map snd (the (caps Log ?d\<^sub>2')))"
+    "list_all2 (same_explicit_cap Send)
+       (map snd (the (caps Send ?d\<^sub>1'))) (map snd (the (caps Send ?d\<^sub>2')))"
+    using key
+    by -
+      (rule fill, subst ps(7), simp, subst ps(8), simp,
+        rule call reg del wri log send,
+        simp split:if_splits option.splits,
+        drule kernel_rep_inj,
+        rewrite in \<open>\<hole> = (_ :: kernel)\<close> in asm kernel.surjective,
+        rewrite in \<open>(_ :: kernel) = \<hole>\<close> in asm kernel.surjective,
+        (auto iff:proc_list_inject)[1])+
+
+  {
+    fix t and l\<^sub>1 l\<^sub>2 :: "(capability_index \<times> word32 list) list"
+    assume "filled_caps t l\<^sub>1" "filled_caps t l\<^sub>2" "t \<noteq> Entry"
+           "list_all2 (same_explicit_cap t) (map snd l\<^sub>1) (map snd l\<^sub>2)"
+    hence "list_all2 (same_cap t) (map snd l\<^sub>1) (map snd l\<^sub>2)"
+      unfolding filled_caps_def list_all_def same_explicit_cap_def list_all2_conv_all_nth
+      by (induct t)
+         (auto split:prod.splits capability.splits list.splits, (metis nth_mem prod.collapse)+)
+   } note dest = this
+
+  from all 1 2 show
+    "list_all2 (same_cap Call)
+       (map snd (the (caps Call ?d\<^sub>1'))) (map snd (the (caps Call ?d\<^sub>2')))"
+    "list_all2 (same_cap Reg)
+       (map snd (the (caps Reg ?d\<^sub>1'))) (map snd (the (caps Reg ?d\<^sub>2')))"
+    "list_all2 (same_cap Del)
+       (map snd (the (caps Del ?d\<^sub>1'))) (map snd (the (caps Del ?d\<^sub>2')))"
+    "list_all2 (same_cap Write)
+       (map snd (the (caps Write ?d\<^sub>1'))) (map snd (the (caps Write ?d\<^sub>2')))"
+    "list_all2 (same_cap Log)
+       (map snd (the (caps Log ?d\<^sub>1'))) (map snd (the (caps Log ?d\<^sub>2')))"
+    "list_all2 (same_cap Send)
+       (map snd (the (caps Send ?d\<^sub>1'))) (map snd (the (caps Send ?d\<^sub>2')))"
+    by -
+      (rule dest[where ?t3=Call]
+        dest[where ?t3=Reg]
+        dest[where ?t3=Del]
+        dest[where ?t3=Write]
+        dest[where ?t3=Log]
+        dest[where ?t3=Send], (simp+)[4])+
+
+  from eq 1 2 show "(the (caps Entry ?d\<^sub>1') = []) = (the (caps Entry ?d\<^sub>2') = [])"
+    using key
+    apply (simp split:if_splits option.splits)
+    apply (drule kernel_rep_inj)
+    apply (rewrite in \<open>\<hole> = (_ :: kernel)\<close> in asm kernel.surjective)
+    apply (rewrite in \<open>(_ :: kernel) = \<hole>\<close> in asm kernel.surjective)
+    by (auto iff:proc_list_inject)
+qed
 
 end

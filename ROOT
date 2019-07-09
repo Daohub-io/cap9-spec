@@ -8,8 +8,7 @@ session "cap9-spec" = "HOL-Word" +
   options [
     document = pdf,
     document_output = "output",
-    document_variants = "Cap9IsabelleSpec",
-    quick_and_dirty = true
+    document_variants = "Cap9IsabelleSpec"
   ]
   theories [document = false]
     "Word_Lib/Word_Lemmas"
